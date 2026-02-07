@@ -94,6 +94,11 @@ class Embedding:
         # Shape: (batch, seq_len, d_model)
         token_emb = self.token_embedding[token_ids]
 
+        # Scale embeddings by sqrt(d_model) as in original paper
+        # This prevents positional encodings (magnitude ~1) from
+        # overwhelming the learned embeddings (magnitude ~0.02)
+        token_emb = token_emb * np.sqrt(self.d_model)
+
         # Step 2: Add positional encoding
         # Slice to match sequence length, broadcast across batch
         # Shape: (seq_len, d_model) -> broadcasts to (batch, seq_len, d_model)

@@ -185,6 +185,50 @@ def collapse_whitespace(text: str) -> str:
     return text.strip()
 
 
+def filter_characters(text: str) -> str:
+    """
+    Filter text to only include characters valid for Spanish literary text.
+
+    Whitelist approach: define what we WANT, remove everything else.
+    This eliminates OCR artifacts, formatting symbols, and programming
+    characters that pollute the vocabulary.
+
+    Kept characters:
+        - Spanish letters (a-z, A-Z, accented vowels, n-tilde, u-umlaut)
+        - Digits (0-9)
+        - Common punctuation: . , ; : ! ? - ' "
+        - Spanish-specific: inverted ! and ?, em-dash, guillemets, curly quotes
+        - Whitespace: space, newline
+        - Parentheses: ( )
+        - Slash: /
+    """
+    # Define the whitelist as a set for O(1) lookup
+    allowed_chars = set(
+        # Basic Latin letters
+        'abcdefghijklmnopqrstuvwxyz'
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+        # Digits
+        '0123456789'
+        # Common punctuation
+        '.,;:!?-\'"'
+        # Whitespace
+        ' \n'
+        # Parentheses and slash
+        '()/'
+        # Spanish-specific accented vowels
+        '\u00e1\u00e9\u00ed\u00f3\u00fa'  # a e i o u with acute
+        '\u00c1\u00c9\u00cd\u00d3\u00da'  # A E I O U with acute
+        '\u00f1\u00d1'                      # n-tilde, N-tilde
+        '\u00fc'                            # u-umlaut (guell, etc.)
+        '\u00bf\u00a1'                      # inverted ? and !
+        '\u2014'                            # em-dash
+        '\u00ab\u00bb'                      # guillemets << >>
+        '\u201c\u201d'                      # curly double quotes
+    )
+
+    return ''.join(char for char in text if char in allowed_chars)
+
+
 def clean_text(text: str, source_type: str = "generic") -> str:
     """
     Full text cleaning pipeline.
@@ -206,7 +250,10 @@ def clean_text(text: str, source_type: str = "generic") -> str:
     # Step 3: Remove generic headers
     text = clean_generic_headers(text)
 
-    # Step 4: Collapse whitespace
+    # Step 4: Filter to allowed characters only
+    text = filter_characters(text)
+
+    # Step 5: Collapse whitespace
     text = collapse_whitespace(text)
 
     return text

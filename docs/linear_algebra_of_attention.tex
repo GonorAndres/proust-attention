@@ -1,0 +1,807 @@
+\documentclass[11pt, a4paper]{article}
+
+% ============================================================================
+% PACKAGES
+% ============================================================================
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{mathtools}
+\usepackage{bm}              % Bold math symbols
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{tcolorbox}
+\usepackage{tikz}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\geometry{margin=2.5cm}
+
+% ============================================================================
+% CUSTOM ENVIRONMENTS
+% ============================================================================
+
+% Formal definition box
+\newtcolorbox{formaldef}[1][]{
+  colback=blue!5!white,
+  colframe=blue!60!black,
+  fonttitle=\bfseries,
+  title={#1},
+  sharp corners,
+  boxrule=0.8pt
+}
+
+% Intuitive explanation box
+\newtcolorbox{intuition}[1][]{
+  colback=green!5!white,
+  colframe=green!50!black,
+  fonttitle=\bfseries,
+  title={#1},
+  sharp corners,
+  boxrule=0.8pt
+}
+
+% Transformer application box
+\newtcolorbox{transformer}[1][]{
+  colback=orange!5!white,
+  colframe=orange!60!black,
+  fonttitle=\bfseries,
+  title={#1},
+  sharp corners,
+  boxrule=0.8pt
+}
+
+% Dimension check box
+\newtcolorbox{dimcheck}{
+  colback=gray!8!white,
+  colframe=gray!50!black,
+  fonttitle=\bfseries,
+  title={Dimension Check},
+  sharp corners,
+  boxrule=0.6pt
+}
+
+% ============================================================================
+% NOTATION
+% ============================================================================
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\vx}{\bm{x}}
+\newcommand{\vq}{\bm{q}}
+\newcommand{\vk}{\bm{k}}
+\newcommand{\vv}{\bm{v}}
+\newcommand{\ve}{\bm{e}}
+\newcommand{\vp}{\bm{p}}
+\newcommand{\vo}{\bm{o}}
+\newcommand{\mW}{\bm{W}}
+\newcommand{\mQ}{\bm{Q}}
+\newcommand{\mK}{\bm{K}}
+\newcommand{\mV}{\bm{V}}
+\newcommand{\mX}{\bm{X}}
+\newcommand{\mE}{\bm{E}}
+\newcommand{\mP}{\bm{P}}
+\newcommand{\mA}{\bm{A}}
+\newcommand{\mO}{\bm{O}}
+\newcommand{\mI}{\bm{I}}
+\newcommand{\shape}[1]{\underset{\scriptscriptstyle #1}{\vphantom{X}}}
+
+% ============================================================================
+% DOCUMENT
+% ============================================================================
+
+\title{\textbf{The Linear Algebra of Attention} \\[0.5em]
+\large A Complete Mathematical Reference for the Proust Attention Machine}
+\author{Proust Attention Project}
+\date{January 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document maps every linear algebra operation in our transformer architecture,
+from character embedding to attention output. Each concept is presented in three layers:
+\textbf{formal definition} (blue box), \textbf{geometric intuition} (green box),
+and \textbf{transformer application} (orange box). Read it to connect your knowledge
+of linear algebra to what the Proust machine actually computes.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% ============================================================================
+\section{Notation and Conventions}
+% ============================================================================
+
+\begin{formaldef}[Notation Table]
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Symbol} & \textbf{Meaning} & \textbf{Value in our model} \\
+\midrule
+$V$ & Vocabulary size (number of unique characters) & $\approx 80$ \\
+$d$ & Model dimension (\texttt{d\_model}) & $64$ \\
+$d_k$ & Dimension per attention head & $32$ \\
+$n_h$ & Number of attention heads & $2$ \\
+$T$ & Sequence length (\texttt{seq\_len}) & $\leq 256$ \\
+$B$ & Batch size & variable \\
+$\R^{m \times n}$ & Set of all real matrices with $m$ rows and $n$ columns & --- \\
+$\bm{A}^\top$ & Transpose of matrix $\bm{A}$ & --- \\
+$\bm{A} \bm{B}$ & Matrix multiplication of $\bm{A}$ and $\bm{B}$ & --- \\
+$\langle \vx, \bm{y} \rangle$ & Dot product (inner product) of vectors $\vx$ and $\bm{y}$ & --- \\
+\bottomrule
+\end{tabular}
+\end{formaldef}
+
+\begin{intuition}[How to Read Shapes]
+Throughout this document, we annotate shapes as $(B, T, d)$ meaning:
+\begin{itemize}[nosep]
+  \item First axis: which sequence in the batch ($B$ sequences)
+  \item Second axis: which position in the sequence ($T$ positions)
+  \item Third axis: which feature/dimension ($d$ numbers per position)
+\end{itemize}
+A matrix multiplication $(B, T, \mathbf{m}) \times (\mathbf{m}, n) = (B, T, n)$ requires
+the \textbf{inner dimensions} to match (both are $m$).
+\end{intuition}
+
+% ============================================================================
+\section{Vectors and Vector Spaces}
+% ============================================================================
+
+\begin{formaldef}[Vector in $\R^n$]
+A \textbf{vector} $\vx \in \R^n$ is an ordered list of $n$ real numbers:
+\[
+\vx = \begin{pmatrix} x_1 \\ x_2 \\ \vdots \\ x_n \end{pmatrix} \in \R^n
+\]
+The set $\R^n$ forms a \textbf{vector space}: vectors can be added and scaled,
+and the results remain in $\R^n$.
+\end{formaldef}
+
+\begin{intuition}[Vectors as Points in Space]
+A vector in $\R^{64}$ is a point in 64-dimensional space. We can't visualize 64 dimensions,
+but the math works identically to 2D or 3D:
+\begin{itemize}[nosep]
+  \item Two vectors can be \textbf{close} (similar) or \textbf{far} (different)
+  \item They can \textbf{point in the same direction} (aligned) or \textbf{perpendicular} (unrelated)
+  \item We can \textbf{add} them (combine information) and \textbf{scale} them (amplify/diminish)
+\end{itemize}
+Every character in our model is represented as a point in $\R^{64}$.
+\end{intuition}
+
+\begin{transformer}[Embedding Vectors]
+Each character in the vocabulary gets a vector $\ve_i \in \R^{64}$.
+After training, characters that behave similarly in Proust's text will have
+vectors that are close together in this 64-dimensional space.
+Vowels might cluster. Consonants might cluster. Punctuation in another region.
+At initialization, these vectors are random --- the structure emerges from training.
+\end{transformer}
+
+% ============================================================================
+\section{The Embedding Lookup: Indexing Into a Matrix}
+% ============================================================================
+
+\begin{formaldef}[Embedding as Row Selection]
+Let $\mE \in \R^{V \times d}$ be the \textbf{embedding matrix}, where row $i$ is the
+embedding vector for character $i$ in the vocabulary.
+
+Given a sequence of token IDs $(t_1, t_2, \ldots, t_T)$ where each $t_j \in \{0, 1, \ldots, V-1\}$,
+the embedding operation selects rows:
+\[
+\mX_{\text{tok}} = \begin{pmatrix} \ve_{t_1}^\top \\ \ve_{t_2}^\top \\ \vdots \\ \ve_{t_T}^\top \end{pmatrix}
+\in \R^{T \times d}
+\]
+This is equivalent to multiplication by a one-hot matrix:
+$\mX_{\text{tok}} = \bm{H} \mE$ where $\bm{H} \in \{0,1\}^{T \times V}$
+and $H_{j,i} = 1$ iff $t_j = i$.
+\end{formaldef}
+
+\begin{dimcheck}
+\[
+\underbrace{\bm{H}}_{T \times V} \times \underbrace{\mE}_{V \times d} = \underbrace{\mX_{\text{tok}}}_{T \times d}
+\]
+Inner dimension $V$ is consumed. Each of $T$ positions gets a $d$-dimensional vector.
+\end{dimcheck}
+
+\begin{intuition}[Lookup vs.\ Multiplication]
+Selecting row 5 from a matrix is the same as multiplying by a one-hot vector
+$[0,0,0,0,0,1,0,\ldots]$. In code, we use direct indexing (\texttt{E[token\_ids]})
+because it's faster than constructing a one-hot matrix. But mathematically, embedding
+\textit{is} a matrix multiplication --- which is why it's differentiable and learnable in gradient terms.
+\end{intuition}
+
+\begin{transformer}[In the Proust Machine]
+\texttt{token\_embedding[token\_ids]} on line 95 of \texttt{embedding.py}:
+\begin{itemize}[nosep]
+  \item Input: $(B, T)$ integers --- each integer is a character ID
+  \item Table: $(80, 64)$ --- one row of 64 numbers per character
+  \item Output: $(B, T, 64)$ --- each character is now a 64-dim vector
+\end{itemize}
+\end{transformer}
+
+% ============================================================================
+\section{Vector Addition: Combining Embeddings with Position}
+% ============================================================================
+
+\begin{formaldef}[Vector Addition]
+For vectors $\vx, \bm{y} \in \R^n$, their sum is defined element-wise:
+\[
+\vx + \bm{y} = \begin{pmatrix} x_1 + y_1 \\ x_2 + y_2 \\ \vdots \\ x_n + y_n \end{pmatrix} \in \R^n
+\]
+The result lies in the same space $\R^n$. Dimensions must match exactly.
+\end{formaldef}
+
+\begin{formaldef}[Positional Encoding]
+The positional encoding matrix $\mP \in \R^{T_{\max} \times d}$ is defined by:
+\[
+P_{(\text{pos}, 2i)} = \sin\!\left(\frac{\text{pos}}{10000^{2i/d}}\right), \qquad
+P_{(\text{pos}, 2i+1)} = \cos\!\left(\frac{\text{pos}}{10000^{2i/d}}\right)
+\]
+for position $\text{pos} \in \{0, \ldots, T_{\max}-1\}$ and dimension index $i \in \{0, \ldots, d/2 - 1\}$.
+
+The combined input is:
+\[
+\mX = \mX_{\text{tok}} + \mP_{[:T,:]} \in \R^{T \times d}
+\]
+\end{formaldef}
+
+\begin{intuition}[Why Addition Works]
+Addition blends two signals into one vector. Imagine two radio stations broadcasting
+on different frequencies --- you can receive both simultaneously because their signals
+don't interfere destructively. Similarly, the learned token embedding and the fixed
+sin/cos positional encoding occupy different ``frequency bands'' in the 64 dimensions.
+
+After addition, dimension 0 might be 80\% character information and 20\% position.
+Dimension 47 might be the reverse. The subsequent projection matrices (W$_Q$, W$_K$, W$_V$)
+can learn to separate or combine these signals as needed.
+\end{intuition}
+
+\begin{dimcheck}
+\[
+\underbrace{\mX_{\text{tok}}}_{T \times d} + \underbrace{\mP}_{T \times d} = \underbrace{\mX}_{T \times d}
+\]
+Both operands must have identical shape. The output has the same shape.
+Addition does not change dimensionality.
+\end{dimcheck}
+
+% ============================================================================
+\section{Linear Transformations: The Heart of Everything}
+% ============================================================================
+
+\begin{formaldef}[Linear Transformation]
+A \textbf{linear transformation} (or linear map) is a function $f: \R^n \to \R^m$
+that satisfies:
+\begin{align}
+f(\vx + \bm{y}) &= f(\vx) + f(\bm{y}) & \text{(additivity)} \\
+f(\alpha \vx) &= \alpha f(\vx) & \text{(homogeneity)}
+\end{align}
+Every linear transformation can be represented as multiplication by a matrix
+$\mW \in \R^{n \times m}$:
+\[
+f(\vx) = \vx \mW \qquad \text{where } \vx \in \R^{1 \times n}, \ f(\vx) \in \R^{1 \times m}
+\]
+The matrix $\mW$ completely defines the transformation. Its columns are the images
+of the standard basis vectors.
+\end{formaldef}
+
+\begin{intuition}[What a Matrix Does to a Vector]
+Multiplying a vector by a matrix does three things geometrically:
+\begin{enumerate}[nosep]
+  \item \textbf{Rotates} --- changes the direction the vector points
+  \item \textbf{Stretches/compresses} --- changes the magnitude along different axes
+  \item \textbf{Projects} --- can reduce or increase dimensionality
+\end{enumerate}
+A $(64, 32)$ matrix takes a 64-dim vector and produces a 32-dim vector.
+It ``squeezes'' the information from 64 dimensions into 32, keeping whatever
+the matrix has learned is most important. Information is necessarily lost
+(64 dimensions into 32 cannot be invertible), but training iterations ensures the
+\textit{useful} information is preserved.
+\end{intuition}
+
+\begin{formaldef}[Matrix Multiplication: The Dimension Rule]
+For matrices $\bm{A} \in \R^{m \times n}$ and $\bm{B} \in \R^{n \times p}$:
+\[
+\bm{C} = \bm{A} \bm{B} \in \R^{m \times p}, \qquad C_{ij} = \sum_{k=1}^{n} A_{ik} B_{kj}
+\]
+\textbf{The critical rule}: the inner dimensions must match ($n = n$).
+The outer dimensions ($m$ and $p$) survive to become the output shape.
+\[
+\underbrace{\bm{A}}_{m \times \mathbf{n}} \times \underbrace{\bm{B}}_{\mathbf{n} \times p} = \underbrace{\bm{C}}_{m \times p}
+\]
+If the inner dimensions don't match, the operation is \textbf{undefined}.
+\end{formaldef}
+
+\begin{intuition}[Three Ways to See Matrix Multiplication]
+\begin{enumerate}[nosep]
+  \item \textbf{Row-column dot products}: entry $C_{ij}$ is the dot product of
+        row $i$ of $\bm{A}$ with column $j$ of $\bm{B}$.
+  \item \textbf{Transformation of rows}: each row of $\bm{A}$ is a vector that
+        gets transformed by $\bm{B}$.
+  \item \textbf{Linear combination of columns}: each column of $\bm{C}$ is a
+        linear combination of columns of $\bm{A}$, with weights from $\bm{B}$.
+\end{enumerate}
+In transformers, interpretation (2) is most useful: each position's vector (a row of $\mX$)
+is independently transformed by the weight matrix.
+\end{intuition}
+
+% ============================================================================
+\section{The Q, K, V Projections}
+% ============================================================================
+
+\begin{formaldef}[Three Learned Projections]
+Given input $\mX \in \R^{T \times d}$ and three weight matrices:
+\[
+\mW_Q \in \R^{d \times d}, \qquad \mW_K \in \R^{d \times d}, \qquad \mW_V \in \R^{d \times d}
+\]
+the Query, Key, and Value matrices are:
+\[
+\mQ = \mX \mW_Q \in \R^{T \times d}, \qquad
+\mK = \mX \mW_K \in \R^{T \times d}, \qquad
+\mV = \mX \mW_V \in \R^{T \times d}
+\]
+\end{formaldef}
+
+\begin{dimcheck}
+\[
+\underbrace{\mX}_{T \times \mathbf{d}} \times \underbrace{\mW_Q}_{\mathbf{d} \times d} = \underbrace{\mQ}_{T \times d}
+\]
+Inner dimension $d=64$ is consumed. Each of $T$ positions produces a new $d$-dimensional vector.
+The same input $\mX$ is multiplied by three \textit{different} matrices to produce three
+\textit{different} outputs.
+\end{dimcheck}
+
+\begin{intuition}[What Each Projection Does Geometrically]
+Each weight matrix rotates and stretches the 64-dimensional input into a new
+64-dimensional space:
+\begin{itemize}[nosep]
+  \item $\mW_Q$ rotates into ``question space'' --- dimensions optimized for expressing what information is needed
+  \item $\mW_K$ rotates into ``key space'' --- dimensions optimized for advertising what information is available
+  \item $\mW_V$ rotates into ``value space'' --- dimensions optimized for carrying useful content
+\end{itemize}
+The same input vector $\vx_i$ is viewed through three different ``lenses.''
+Each lens extracts different aspects of the combined character+position information.
+\end{intuition}
+
+\begin{transformer}[In the Proust Machine]
+\texttt{attention.py} lines 199--201:
+\begin{verbatim}
+Q = x @ self.W_Q   # (1, 13, 64) @ (64, 64) = (1, 13, 64)
+K = x @ self.W_K   # (1, 13, 64) @ (64, 64) = (1, 13, 64)
+V = x @ self.W_V   # (1, 13, 64) @ (64, 64) = (1, 13, 64)
+\end{verbatim}
+Three separate applications of the same operation (matrix multiply) with three
+different learned matrices. The batch dimension $B$ passes through unchanged ---
+each sequence in the batch is processed independently.
+\end{transformer}
+
+% ============================================================================
+\section{The Dot Product: Measuring Compatibility}
+% ============================================================================
+
+\begin{formaldef}[Dot Product (Inner Product)]
+For vectors $\vx, \bm{y} \in \R^n$:
+\[
+\langle \vx, \bm{y} \rangle = \vx^\top \bm{y} = \sum_{i=1}^{n} x_i y_i \in \R
+\]
+Geometric form:
+\[
+\langle \vx, \bm{y} \rangle = \|\vx\| \cdot \|\bm{y}\| \cdot \cos\theta
+\]
+where $\theta$ is the angle between the vectors and $\|\vx\| = \sqrt{\sum x_i^2}$ is the Euclidean norm.
+\end{formaldef}
+
+\begin{intuition}[What the Dot Product Means]
+The dot product combines magnitude and alignment into one number:
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Geometric Relationship} & \textbf{Dot Product} \\
+\midrule
+Same direction ($\theta = 0$) & Large positive \\
+Perpendicular ($\theta = 90°$) & Zero \\
+Opposite direction ($\theta = 180°$) & Large negative \\
+\bottomrule
+\end{tabular}
+\end{center}
+The dot product does not inherently measure ``meaning similarity.''
+It measures geometric alignment. In the transformer, the Q and K projections
+\textit{create} a space where alignment corresponds to usefulness --- this
+correspondence is "learned" by testing, not built in.
+\end{intuition}
+
+\begin{formaldef}[All Pairwise Dot Products via Matrix Multiplication]
+To compute the dot product between every pair of rows from $\mQ \in \R^{T \times d_k}$
+and $\mK \in \R^{T \times d_k}$:
+\[
+\mS = \mQ \mK^\top \in \R^{T \times T}, \qquad S_{ij} = \langle \vq_i, \vk_j \rangle = \sum_{l=1}^{d_k} Q_{il} K_{jl}
+\]
+Entry $S_{ij}$ is the dot product of Query at position $i$ with Key at position $j$:
+how compatible position $i$'s question is with position $j$'s advertisement.
+\end{formaldef}
+
+\begin{dimcheck}
+\[
+\underbrace{\mQ}_{T \times \mathbf{d_k}} \times \underbrace{\mK^\top}_{\mathbf{d_k} \times T} = \underbrace{\mS}_{T \times T}
+\]
+The feature dimension $d_k$ is consumed. What remains is a $T \times T$ matrix:
+every position scored against every other position. This is why attention has
+$O(T^2)$ complexity --- the score matrix grows quadratically with sequence length.
+\end{dimcheck}
+
+\begin{transformer}[In the Proust Machine]
+\texttt{attention.py} line 221:
+\begin{verbatim}
+scores = Q @ K.transpose(0, 1, 3, 2)
+# (1, 2, 13, 32) @ (1, 2, 32, 13) = (1, 2, 13, 13)
+\end{verbatim}
+The transpose swaps the last two dimensions of $\mK$, turning each head's
+$(T, d_k)$ into $(d_k, T)$. The batch and head dimensions pass through unchanged.
+The result is a $(13, 13)$ compatibility matrix \textit{per head}.
+\end{transformer}
+
+% ============================================================================
+\section{Scaling: Variance Control}
+% ============================================================================
+
+\begin{formaldef}[Scaled Dot-Product]
+\[
+\mS_{\text{scaled}} = \frac{\mQ \mK^\top}{\sqrt{d_k}}
+\]
+If entries of $\mQ$ and $\mK$ have variance $\sigma^2$, then entries of $\mQ\mK^\top$
+have variance $d_k \cdot \sigma^4$ (sum of $d_k$ products). Dividing by $\sqrt{d_k}$
+restores variance to $\sigma^4$, independent of dimension.
+\end{formaldef}
+
+\begin{intuition}[Why $\sqrt{d_k}$?]
+Without scaling, larger $d_k$ means larger dot products, which means softmax
+saturates (outputs near 0 or 1), which means gradients vanish, which means
+the model stops learning. The $\sqrt{d_k}$ is not a hyperparameter to tune ---
+it's a mathematical correction derived from the statistics of random dot products.
+
+In our model: $\sqrt{d_k} = \sqrt{32} \approx 5.66$. Every score is divided by 5.66.
+\end{intuition}
+
+% ============================================================================
+\section{The Causal Mask: Constraining the Score Matrix}
+% ============================================================================
+
+\begin{formaldef}[Causal Mask]
+Define the mask matrix $\bm{M} \in \R^{T \times T}$:
+\[
+M_{ij} = \begin{cases}
+0 & \text{if } j \leq i \quad \text{(past and present)} \\
+-\infty & \text{if } j > i \quad \text{(future)}
+\end{cases}
+\]
+Applied by addition: $\mS_{\text{masked}} = \mS_{\text{scaled}} + \bm{M}$
+\end{formaldef}
+
+\begin{intuition}[Why Addition of $-\infty$ Works]
+Adding $-\infty$ to a score means $\exp(-\infty) = 0$ in the subsequent softmax.
+The future position gets exactly zero attention weight. This is more elegant than
+deleting entries --- the matrix stays the same shape, and the operation is differentiable
+everywhere except at the masked positions (where we don't need gradients anyway).
+
+The mask is a lower-triangular matrix of zeros with $-\infty$ above the diagonal:
+\[
+\bm{M} = \begin{pmatrix}
+0 & -\infty & -\infty & -\infty \\
+0 & 0 & -\infty & -\infty \\
+0 & 0 & 0 & -\infty \\
+0 & 0 & 0 & 0
+\end{pmatrix}
+\]
+\end{intuition}
+
+% ============================================================================
+\section{Softmax: From Scores to Probability Distribution}
+% ============================================================================
+
+\begin{formaldef}[Softmax Function]
+For a vector $\bm{z} \in \R^n$, the softmax function $\sigma: \R^n \to \Delta^{n-1}$
+maps to the probability simplex:
+\[
+\sigma(\bm{z})_i = \frac{e^{z_i}}{\sum_{j=1}^{n} e^{z_j}}, \qquad i = 1, \ldots, n
+\]
+Properties:
+\begin{itemize}[nosep]
+  \item $\sigma(\bm{z})_i > 0$ for all $i$ (always positive)
+  \item $\sum_i \sigma(\bm{z})_i = 1$ (sums to one)
+  \item Monotone: if $z_i > z_j$ then $\sigma(\bm{z})_i > \sigma(\bm{z})_j$ (preserves order)
+  \item $\sigma(\bm{z} + c\bm{1}) = \sigma(\bm{z})$ for any constant $c$ (shift-invariant)
+\end{itemize}
+\end{formaldef}
+
+\begin{formaldef}[Numerically Stable Implementation]
+\[
+\sigma(\bm{z})_i = \frac{e^{z_i - \max(\bm{z})}}{\sum_{j} e^{z_j - \max(\bm{z})}}
+\]
+This is mathematically identical (by shift-invariance) but prevents overflow,
+since the largest exponent is $e^0 = 1$.
+\end{formaldef}
+
+\begin{intuition}[Softmax as Maximum-Entropy Allocation]
+Softmax is not an arbitrary normalization. It is the \textbf{unique} probability distribution
+that:
+\begin{enumerate}[nosep]
+  \item Respects the ordering of scores (higher score $=$ higher probability)
+  \item Maximizes entropy (makes the fewest assumptions beyond what scores dictate)
+\end{enumerate}
+This is a theorem from information theory. Any other normalization would inject
+unjustified bias into how attention weight is allocated.
+\end{intuition}
+
+\begin{transformer}[Applied Row-wise to the Score Matrix]
+\[
+\mA = \text{softmax}\!\left(\frac{\mQ\mK^\top}{\sqrt{d_k}} + \bm{M}\right) \in \R^{T \times T}
+\]
+Each row $\mA_{i,:}$ is an independent probability distribution over context positions.
+Row $i$ sums to 1 and represents: ``how much attention does position $i$ pay to each
+previous position.''
+
+\begin{verbatim}
+attention_weights = softmax(scores, axis=-1)
+# (1, 2, 13, 13) -- each row of the last two dims sums to 1
+\end{verbatim}
+\end{transformer}
+
+% ============================================================================
+\section{Weighted Sum: Retrieving Information}
+% ============================================================================
+
+\begin{formaldef}[Convex Combination of Vectors]
+A \textbf{convex combination} of vectors $\vv_1, \ldots, \vv_T \in \R^{d_k}$
+with weights $\alpha_1, \ldots, \alpha_T \geq 0$ summing to 1 is:
+\[
+\vo = \sum_{j=1}^{T} \alpha_j \vv_j = \alpha_1 \vv_1 + \alpha_2 \vv_2 + \cdots + \alpha_T \vv_T \in \R^{d_k}
+\]
+The result lies within the \textbf{convex hull} of the input vectors --- it cannot
+escape the region spanned by them. It is a ``blend'' that lives somewhere
+``in between'' the input vectors, positioned by the weights.
+\end{formaldef}
+
+\begin{formaldef}[As Matrix Multiplication]
+Computing the convex combination for \textit{all} positions simultaneously:
+\[
+\mO = \mA \mV \in \R^{T \times d_k}
+\]
+Row $i$ of $\mO$ is the convex combination of all rows of $\mV$, weighted by row $i$ of $\mA$:
+\[
+\vo_i = \sum_{j=1}^{T} A_{ij} \vv_j
+\]
+\end{formaldef}
+
+\begin{dimcheck}
+\[
+\underbrace{\mA}_{T \times \mathbf{T}} \times \underbrace{\mV}_{\mathbf{T} \times d_k} = \underbrace{\mO}_{T \times d_k}
+\]
+The sequence dimension $T$ is consumed. Each position's output is a $d_k$-dimensional
+vector that blends information from all attended positions.
+\end{dimcheck}
+
+\begin{intuition}[Soft Selection]
+If the attention weights were one-hot (one entry is 1, rest are 0), this would be
+\textit{hard} selection: just copy one Value vector. Softmax makes it \textit{soft}:
+a weighted average. This softness is critical --- it makes the operation differentiable,
+which means gradients can flow through and the model can learn \textit{which} positions
+to attend to, using gradient.
+\end{intuition}
+
+\begin{transformer}[In the Proust Machine]
+\texttt{attention.py} line 248:
+\begin{verbatim}
+head_outputs = attention_weights @ V
+# (1, 2, 13, 13) @ (1, 2, 13, 32) = (1, 2, 13, 32)
+\end{verbatim}
+Each head independently computes its weighted retrieval. The batch and head
+dimensions pass through unchanged. Each position's 32-dim output encodes
+context gathered according to that head's attention pattern.
+\end{transformer}
+
+% ============================================================================
+\section{Reshape and Transpose: Multi-Head Mechanics}
+% ============================================================================
+
+\begin{formaldef}[Tensor Reshape]
+A \textbf{reshape} reinterprets the memory layout without changing the data.
+For a matrix $\bm{A} \in \R^{T \times d}$ where $d = n_h \cdot d_k$:
+\[
+\text{reshape}(\bm{A}, [T, n_h, d_k]) \in \R^{T \times n_h \times d_k}
+\]
+The total number of elements is unchanged: $T \cdot d = T \cdot n_h \cdot d_k$.
+No computation occurs --- only the ``shape label'' on the data changes.
+\end{formaldef}
+
+\begin{formaldef}[Transpose (Axis Permutation)]
+A \textbf{transpose} reorders the axes of a tensor. For a 3D tensor $\bm{A} \in \R^{T \times n_h \times d_k}$:
+\[
+\text{transpose}(\bm{A}, [1, 0, 2]) \in \R^{n_h \times T \times d_k}
+\]
+This moves the head axis to the front, so we can compute attention for all heads
+in a single batched matrix multiplication.
+\end{formaldef}
+
+\begin{dimcheck}
+Split heads:
+\[
+\underbrace{\mQ}_{(B, T, d)} \xrightarrow{\text{reshape}} \underbrace{\mQ}_{(B, T, n_h, d_k)} \xrightarrow{\text{transpose}} \underbrace{\mQ}_{(B, n_h, T, d_k)}
+\]
+In our model:
+\[
+(1, 13, 64) \to (1, 13, 2, 32) \to (1, 2, 13, 32)
+\]
+
+Merge heads (reverse):
+\[
+\underbrace{\mO}_{(B, n_h, T, d_k)} \xrightarrow{\text{transpose}} \underbrace{\mO}_{(B, T, n_h, d_k)} \xrightarrow{\text{reshape}} \underbrace{\mO}_{(B, T, d)}
+\]
+\[
+(1, 2, 13, 32) \to (1, 13, 2, 32) \to (1, 13, 64)
+\]
+\end{dimcheck}
+
+\begin{intuition}[Why Move Heads Before Sequence?]
+After transposing to $(B, n_h, T, d_k)$, the last two dimensions are $(T, d_k)$ ---
+exactly the shape needed for attention: $T$ positions, each with $d_k$ features.
+The batch and head dimensions sit in front, meaning NumPy/PyTorch can process
+all heads in all batches simultaneously with a single matrix multiplication call.
+
+Without the transpose, we'd need a loop over heads. With it, one \texttt{@} does everything.
+\end{intuition}
+
+% ============================================================================
+\section{The Output Projection: Mixing Across Heads}
+% ============================================================================
+
+\begin{formaldef}[Output Projection]
+After merging heads, the concatenated output $\mO_{\text{cat}} \in \R^{T \times d}$
+(where the first $d_k$ dimensions are head 1, the next $d_k$ are head 2) is projected:
+\[
+\mO_{\text{final}} = \mO_{\text{cat}} \mW_O, \qquad \mW_O \in \R^{d \times d}
+\]
+\end{formaldef}
+
+\begin{dimcheck}
+\[
+\underbrace{\mO_{\text{cat}}}_{T \times \mathbf{d}} \times \underbrace{\mW_O}_{\mathbf{d} \times d} = \underbrace{\mO_{\text{final}}}_{T \times d}
+\]
+\end{dimcheck}
+
+\begin{intuition}[Why This Projection Is Necessary]
+Before $\mW_O$, the 64 dimensions are rigidly split: dims 0--31 are head 1,
+dims 32--63 are head 2. They can't interact. $\mW_O$ is a full $(64, 64)$ matrix
+that creates \textit{linear combinations across all 64 dimensions}, allowing
+head 1's findings to modulate how head 2's findings are interpreted.
+
+Without $\mW_O$, multi-head attention would just be two independent single-head
+attentions glued together. With $\mW_O$, the heads become a coordinated system.
+\end{intuition}
+
+% ============================================================================
+\section{The Complete Attention Formula}
+% ============================================================================
+
+\begin{formaldef}[Single-Head Attention]
+\[
+\text{Attention}(\mQ, \mK, \mV) = \underbrace{\text{softmax}\!\left(\frac{\mQ\mK^\top}{\sqrt{d_k}} + \bm{M}\right)}_{\mA \in \R^{T \times T}} \mV \in \R^{T \times d_k}
+\]
+\end{formaldef}
+
+\begin{formaldef}[Multi-Head Attention]
+\begin{align}
+\text{head}_h &= \text{Attention}(\mX\mW_Q^{(h)},\ \mX\mW_K^{(h)},\ \mX\mW_V^{(h)}) \in \R^{T \times d_k} \\[6pt]
+\text{MultiHead}(\mX) &= \text{Concat}(\text{head}_1, \ldots, \text{head}_{n_h}) \, \mW_O \in \R^{T \times d}
+\end{align}
+\end{formaldef}
+
+\begin{formaldef}[Complete Dimension Flow]
+\[
+\boxed{
+\begin{aligned}
+\mX &\in \R^{T \times d} & & \text{input} \\
+\mQ = \mX \mW_Q &\in \R^{T \times d} & & \text{projection} \\
+\mQ \to \mQ^{(h)} &\in \R^{n_h \times T \times d_k} & & \text{split heads} \\
+\mQ^{(h)} {\mK^{(h)}}^\top &\in \R^{n_h \times T \times T} & & \text{score matrix} \\
+\frac{1}{\sqrt{d_k}} \cdot (\cdot) + \bm{M} &\in \R^{n_h \times T \times T} & & \text{scale + mask} \\
+\text{softmax}(\cdot) = \mA &\in \R^{n_h \times T \times T} & & \text{attention weights} \\
+\mA \mV^{(h)} &\in \R^{n_h \times T \times d_k} & & \text{weighted retrieval} \\
+\text{merge, project by } \mW_O &\in \R^{T \times d} & & \text{output}
+\end{aligned}
+}
+\]
+Input shape equals output shape: $\R^{T \times d} \to \R^{T \times d}$.
+\end{formaldef}
+
+% ============================================================================
+\section{Summary: Every Operation at a Glance}
+% ============================================================================
+
+\begin{center}
+\renewcommand{\arraystretch}{1.4}
+\begin{tabular}{@{}p{3cm}p{3.5cm}p{3cm}p{4cm}@{}}
+\toprule
+\textbf{Operation} & \textbf{Linear Algebra} & \textbf{Dimensions} & \textbf{What It Does} \\
+\midrule
+Embedding lookup & Row selection ($\bm{H}\mE$) & $(T,V) \times (V,d) = (T,d)$ & Discrete symbols to continuous vectors \\
+\addlinespace
+Position addition & Vector addition & $(T,d) + (T,d) = (T,d)$ & Injects position information \\
+\addlinespace
+Q, K, V projection & Matrix multiply & $(T,d) \times (d,d) = (T,d)$ & Rotates into Q/K/V spaces \\
+\addlinespace
+Head split & Reshape + transpose & $(T,d) \to (n_h,T,d_k)$ & Separates heads for parallel attention \\
+\addlinespace
+Score computation & $\mQ\mK^\top$ & $(T,d_k) \times (d_k,T) = (T,T)$ & All pairwise compatibilities \\
+\addlinespace
+Scaling & Scalar division & $(T,T) / \sqrt{d_k} = (T,T)$ & Variance normalization \\
+\addlinespace
+Masking & Matrix addition & $(T,T) + (T,T) = (T,T)$ & Blocks future positions \\
+\addlinespace
+Softmax & $\R^T \to \Delta^{T-1}$ (per row) & $(T,T) \to (T,T)$ & Scores to probability distributions \\
+\addlinespace
+Weighted sum & $\mA\mV$ & $(T,T) \times (T,d_k) = (T,d_k)$ & Context-weighted information retrieval \\
+\addlinespace
+Head merge & Transpose + reshape & $(n_h,T,d_k) \to (T,d)$ & Concatenate head outputs \\
+\addlinespace
+Output projection & Matrix multiply & $(T,d) \times (d,d) = (T,d)$ & Mixes information across heads \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ============================================================================
+\section{Key Identities and Properties}
+% ============================================================================
+
+\begin{formaldef}[Properties Used in Attention]
+\begin{enumerate}[nosep]
+  \item \textbf{Associativity}: $(\bm{A}\bm{B})\bm{C} = \bm{A}(\bm{B}\bm{C})$
+        --- we can choose the most efficient multiplication order.
+
+  \item \textbf{Transpose of product}: $(\bm{A}\bm{B})^\top = \bm{B}^\top \bm{A}^\top$
+        --- order reverses under transpose.
+
+  \item \textbf{Distributivity}: $\bm{A}(\bm{B} + \bm{C}) = \bm{A}\bm{B} + \bm{A}\bm{C}$
+        --- used implicitly when the residual connection adds back the input.
+
+  \item \textbf{Dot product as matrix multiply}: $\langle \vx, \bm{y} \rangle = \vx^\top \bm{y}$
+        --- a special case of matrix multiplication with $(1, n) \times (n, 1) = (1, 1)$.
+
+  \item \textbf{Batch broadcasting}: a $(d, d)$ weight matrix applied to $(B, T, d)$
+        acts independently on each of the $B \times T$ vectors. The batch and sequence
+        dimensions are ``spectators'' that pass through unchanged.
+
+  \item \textbf{Softmax shift-invariance}: $\sigma(\bm{z} + c) = \sigma(\bm{z})$
+        --- enables the numerical stability trick.
+
+  \item \textbf{Convex combination stays in convex hull}: the output of $\mA\mV$
+        (with $\mA$ being row-stochastic) lies within the convex hull of $\mV$'s rows.
+        Attention cannot create new information, only \textit{blend} existing information.
+\end{enumerate}
+\end{formaldef}
+
+% ============================================================================
+\section{What This Document Does Not Cover (Yet)}
+% ============================================================================
+
+The following components also use linear algebra and will be documented
+as we implement them:
+
+\begin{itemize}[nosep]
+  \item \textbf{Layer Normalization}: normalization across the feature dimension,
+        using mean and variance statistics. Involves element-wise operations and
+        learned affine parameters.
+  \item \textbf{Feedforward Network}: two linear transformations with a nonlinearity:
+        $\text{FFN}(\vx) = \mW_2 \, \text{GELU}(\mW_1 \vx + \bm{b}_1) + \bm{b}_2$.
+        Changes dimension $d \to 4d \to d$.
+  \item \textbf{Residual Connection}: $\vx + f(\vx)$, simple vector addition
+        that enables gradient flow through deep networks.
+  \item \textbf{Final Linear Projection}: $(T, d) \times (d, V) = (T, V)$,
+        mapping from model space to vocabulary logits.
+  \item \textbf{Backpropagation}: how gradients of the loss with respect to
+        each weight matrix are computed using the chain rule and transposed Jacobians.
+\end{itemize}
+
+\vfill
+\begin{center}
+\textit{``The only real voyage of discovery consists not in seeking new landscapes,\\
+but in having new eyes.'' --- Marcel Proust}
+\end{center}
+
+\end{document}

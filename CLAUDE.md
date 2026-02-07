@@ -50,20 +50,20 @@ proust-attention/
 ## Development Phases
 
 ### Phase 1: NumPy Implementation (Understanding)
-- [ ] Data download + cleaning
-- [ ] Character vocabulary builder
-- [ ] Embedding layer with positional encoding
-- [ ] Single-head attention forward pass
-- [ ] Multi-head attention
-- [ ] Feedforward sublayer
-- [ ] Layer normalization
-- [ ] Full transformer block forward pass
+- [x] Data download + cleaning
+- [x] Character vocabulary builder
+- [x] Embedding layer with positional encoding
+- [x] Single-head attention forward pass
+- [x] Multi-head attention
+- [x] Feedforward sublayer
+- [x] Layer normalization
+- [x] Full transformer block forward pass
 - [ ] Verify against PyTorch equivalents
 
 ### Phase 2: PyTorch Training (Power)
-- [ ] Port NumPy code to PyTorch (keep structure identical)
-- [ ] Implement training loop with AdamW
-- [ ] Add gradient clipping, learning rate scheduling
+- [x] Port NumPy code to PyTorch (keep structure identical)
+- [x] Implement training loop with AdamW
+- [x] Add gradient clipping, learning rate scheduling
 - [ ] Train on full corpus (Colab GPU)
 - [ ] Checkpoint saving/loading
 

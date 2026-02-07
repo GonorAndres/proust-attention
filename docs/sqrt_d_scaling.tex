@@ -1,0 +1,657 @@
+\documentclass[11pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{mathtools}
+\usepackage{bm}
+\usepackage{tcolorbox}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage[margin=2.5cm]{geometry}
+
+% =====================================================================
+% COLOR BOXES
+% =====================================================================
+
+\newtcolorbox{formaldef}[1][]{
+  colback=blue!5!white,
+  colframe=blue!60!black,
+  fonttitle=\bfseries,
+  title={#1},
+  sharp corners,
+  boxrule=0.8pt
+}
+
+\newtcolorbox{intuition}[1][]{
+  colback=green!5!white,
+  colframe=green!50!black,
+  fonttitle=\bfseries,
+  title={#1},
+  sharp corners,
+  boxrule=0.8pt
+}
+
+\newtcolorbox{application}[1][]{
+  colback=orange!5!white,
+  colframe=orange!60!black,
+  fonttitle=\bfseries,
+  title={#1},
+  sharp corners,
+  boxrule=0.8pt
+}
+
+\newtcolorbox{dimcheck}{
+  colback=gray!8!white,
+  colframe=gray!50!black,
+  fonttitle=\bfseries,
+  title={Dimension Check},
+  sharp corners,
+  boxrule=0.6pt
+}
+
+
+\title{\textbf{The $\sqrt{d}$ Scaling Factor: From Variance to Transformers} \\[0.5em]
+\large A Bridge Document for the Proust Attention Machine}
+\author{Proust Attention Machine Project}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document answers one question: \emph{why does $\sqrt{d}$ appear everywhere in transformers?}
+We build the answer from first principles --- starting with the variance of a single random variable,
+then sums, then dot products, and finally connecting to both the $1/\sqrt{d_k}$ scaling in attention
+and the $\sqrt{d_\text{model}}$ scaling in embeddings. Every step uses concrete numerical examples
+from our 64-dimensional Proust model. Three layers of explanation are used throughout:
+formal definitions (blue), geometric intuition (green), and practical application to our codebase (orange).
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+
+% =====================================================================
+\section{Notation and Conventions}
+% =====================================================================
+
+\begin{tabular}{lll}
+\toprule
+\textbf{Symbol} & \textbf{Meaning} & \textbf{Our value} \\
+\midrule
+$d$ & Generic dimension (number of elements in a vector) & varies \\
+$d_\text{model}$ & Embedding dimension & 64 \\
+$d_k$ & Per-head dimension ($d_\text{model} / n_\text{heads}$) & 32 \\
+$n_\text{heads}$ & Number of attention heads & 2 \\
+$\sigma$ & Standard deviation of a random variable & varies \\
+$\sigma^2$ & Variance of a random variable & varies \\
+$\mathbb{E}[X]$ & Expected value (average) of random variable $X$ & --- \\
+$\text{Var}(X)$ & Variance of random variable $X$ & --- \\
+$\bm{q}, \bm{k}$ & Query and key vectors in attention & $(d_k,)$ \\
+\bottomrule
+\end{tabular}
+
+\bigskip
+\noindent We write vectors in bold ($\bm{v}$) and scalars in italics ($x$). Shape annotations
+appear in comments: \texttt{(batch, seq, d\_model)}.
+
+
+% =====================================================================
+\section{Prerequisite: What Is Variance?}
+% =====================================================================
+
+Before we can understand $\sqrt{d}$, we need to be precise about variance.
+
+\begin{formaldef}[Definition: Variance]
+The \textbf{variance} of a random variable $X$ measures how spread out its values are from the mean:
+\[
+\text{Var}(X) = \mathbb{E}\bigl[(X - \mathbb{E}[X])^2\bigr] = \mathbb{E}[X^2] - (\mathbb{E}[X])^2
+\]
+The \textbf{standard deviation} is $\sigma = \sqrt{\text{Var}(X)}$.
+
+\medskip
+\noindent A random variable $X \sim \mathcal{N}(0, 1)$ (standard normal) has:
+\[
+\mathbb{E}[X] = 0, \qquad \text{Var}(X) = 1, \qquad \sigma = 1
+\]
+This means values are typically between $-2$ and $+2$ (within 2 standard deviations).
+\end{formaldef}
+
+\begin{intuition}[What variance feels like]
+Variance tells you \textbf{how big the numbers tend to be} (ignoring sign).
+
+\begin{itemize}
+\item Variance $= 1$: numbers are typically around $\pm 1$. Like a gentle wave.
+\item Variance $= 64$: numbers are typically around $\pm 8$ ($\sigma = \sqrt{64} = 8$). Much wilder.
+\item Variance $= 0.0004$: numbers are typically around $\pm 0.02$. Almost flat.
+\end{itemize}
+
+\noindent When we say ``we want variance $= 1$,'' we mean: \emph{keep the numbers in a moderate range
+where nothing explodes or vanishes.}
+\end{intuition}
+
+\begin{application}[Variance in our Proust model]
+Our embedding matrix is initialized with \texttt{np.random.randn(...) * 0.02}, which means:
+\[
+\text{Each element} \sim \mathcal{N}(0, 0.02^2) = \mathcal{N}(0, 0.0004)
+\]
+So each embedding element is typically $\pm 0.02$. Very small on purpose --- to prevent
+activations from exploding through the network layers on the very first forward pass.
+\end{application}
+
+
+% =====================================================================
+\section{The Core Theorem: Variance of a Sum}
+% =====================================================================
+
+This is the single most important result for understanding $\sqrt{d}$. Everything else follows from it.
+
+\begin{formaldef}[Theorem: Variance of a sum of independent variables]
+Let $X_1, X_2, \ldots, X_d$ be \textbf{independent} random variables, each with mean $0$ and variance $\sigma^2$. Then:
+\[
+S = X_1 + X_2 + \cdots + X_d
+\]
+has:
+\[
+\mathbb{E}[S] = 0, \qquad \text{Var}(S) = d \cdot \sigma^2
+\]
+
+\medskip
+\noindent \textbf{Proof:} Since the variables are independent, variances add:
+\begin{align*}
+\text{Var}(S) &= \text{Var}(X_1) + \text{Var}(X_2) + \cdots + \text{Var}(X_d) \\
+              &= \sigma^2 + \sigma^2 + \cdots + \sigma^2 \\
+              &= d \cdot \sigma^2
+\end{align*}
+\noindent Standard deviation of the sum: $\sigma_S = \sqrt{d \cdot \sigma^2} = \sqrt{d} \cdot \sigma$.
+\end{formaldef}
+
+\begin{intuition}[Why sums get bigger]
+Imagine flipping a coin that says $+1$ or $-1$. After 1 flip, you could be at $\pm 1$.
+After 4 flips? You might be at $+2$ or $-2$ (not $\pm 4$). After 64 flips? Typically around $\pm 8$.
+
+The pattern: after $d$ flips, you're typically at $\pm \sqrt{d}$.
+
+This is the \textbf{random walk}: each step is random, but the accumulation grows as $\sqrt{d}$,
+not as $d$. It's a fundamental law of probability.
+
+\medskip
+\begin{center}
+\begin{tabular}{ccc}
+\toprule
+\textbf{Number of terms ($d$)} & $\sqrt{d}$ & \textbf{Typical magnitude of sum} \\
+\midrule
+1   & 1.0 & $\pm 1$ \\
+4   & 2.0 & $\pm 2$ \\
+16  & 4.0 & $\pm 4$ \\
+64  & 8.0 & $\pm 8$ \\
+512 & 22.6 & $\pm 23$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The sum of $d$ independent random numbers has standard deviation $\sqrt{d}$ times bigger
+than each individual number. This is why $\sqrt{d}$ is the natural correction factor.
+\end{intuition}
+
+\begin{application}[In our 64-dimensional model]
+Each embedding vector has $d_\text{model} = 64$ elements. If each element has
+$\sigma = 0.02$, then any operation that sums all 64 elements produces a result with:
+\[
+\sigma_\text{sum} = \sqrt{64} \times 0.02 = 8 \times 0.02 = 0.16
+\]
+The sum is $8\times$ bigger than each element. That factor of 8 is $\sqrt{d_\text{model}}$.
+\end{application}
+
+
+% =====================================================================
+\section{Dot Products: Where $\sqrt{d}$ Becomes Critical}
+% =====================================================================
+
+The dot product is the most important operation in transformers. Attention scores, embedding
+lookups, and linear projections all reduce to dot products. And dot products suffer directly
+from the variance accumulation we just described.
+
+\begin{formaldef}[Theorem: Variance of a dot product]
+Let $\bm{q} = (q_1, \ldots, q_d)$ and $\bm{k} = (k_1, \ldots, k_d)$ be two random vectors
+where all elements are \textbf{independent} with mean $0$ and variance $\sigma^2$.
+
+The dot product $\bm{q} \cdot \bm{k} = \sum_{i=1}^{d} q_i \, k_i$ has:
+\begin{align*}
+\mathbb{E}[\bm{q} \cdot \bm{k}] &= 0 \\[6pt]
+\text{Var}(\bm{q} \cdot \bm{k}) &= d \cdot \sigma^4
+\end{align*}
+
+\medskip
+\noindent \textbf{Proof:}
+
+Each term of the sum is $Z_i = q_i \cdot k_i$.
+
+\noindent \emph{Step 1: Mean of each term.}\\
+Since $q_i$ and $k_i$ are independent and both have mean 0:
+\[
+\mathbb{E}[q_i \cdot k_i] = \mathbb{E}[q_i] \cdot \mathbb{E}[k_i] = 0 \cdot 0 = 0
+\]
+
+\noindent \emph{Step 2: Variance of each term.}\\
+For independent zero-mean variables:
+\[
+\text{Var}(q_i \cdot k_i) = \mathbb{E}[q_i^2 \cdot k_i^2] - (\mathbb{E}[q_i \cdot k_i])^2
+= \mathbb{E}[q_i^2] \cdot \mathbb{E}[k_i^2] - 0
+= \sigma^2 \cdot \sigma^2 = \sigma^4
+\]
+
+\noindent \emph{Step 3: Variance of the sum.}\\
+The $d$ terms $Z_1, \ldots, Z_d$ are independent (since different indices are independent), so:
+\[
+\text{Var}\!\left(\sum_{i=1}^{d} Z_i\right) = d \cdot \sigma^4
+\]
+Standard deviation: $\sqrt{d} \cdot \sigma^2$.
+\end{formaldef}
+
+\begin{intuition}[What this means in plain language]
+A dot product sums $d$ terms. Each term is small (a product of two small numbers), but there
+are $d$ of them. By the ``variance of sums'' theorem, the result is $\sqrt{d}$ times bigger
+than any single term.
+
+\medskip
+\noindent \textbf{Concrete example with $d = 64$ and $\sigma = 1$:}
+
+Each term $q_i \cdot k_i$ has variance $1^4 = 1$.
+The sum of 64 such terms has variance $64 \cdot 1 = 64$, so $\sigma_\text{dot} = \sqrt{64} = 8$.
+
+This means dot product values are typically around $\pm 8$ --- not $\pm 1$.
+
+\medskip
+\noindent \textbf{The critical question}: if we want the dot product to have variance $1$
+(so that downstream operations like softmax work well), how do we fix this?
+
+\medskip
+\noindent \textbf{Answer}: divide by $\sqrt{d}$:
+\[
+\text{Var}\!\left(\frac{\bm{q} \cdot \bm{k}}{\sqrt{d}}\right) = \frac{\text{Var}(\bm{q} \cdot \bm{k})}{d} = \frac{d \cdot \sigma^4}{d} = \sigma^4
+\]
+For $\sigma = 1$: variance becomes $1$. The scaling perfectly compensates.
+\end{intuition}
+
+\begin{application}[In our attention mechanism (\texttt{src/attention.py:224})]
+Our multi-head attention computes:
+\begin{verbatim}
+scores = Q @ K.transpose(0, 1, 3, 2)   # (1, 2, 4, 32) @ (1, 2, 32, 4) = (1, 2, 4, 4)
+scores = scores / np.sqrt(self.d_k)     # divide by sqrt(32) = 5.66
+\end{verbatim}
+
+\noindent Here $d_k = 32$ (per-head dimension). Each attention score is a dot product of
+32-dimensional query and key vectors. Without dividing by $\sqrt{32} \approx 5.66$, the scores
+would have standard deviation $\sim 5.66$ (assuming unit-variance elements), making softmax
+produce near-one-hot outputs.
+\end{application}
+
+
+% =====================================================================
+\section{Why Softmax Cares About Scale}
+% =====================================================================
+
+\begin{formaldef}[The softmax function]
+For a vector $\bm{z} = (z_1, \ldots, z_n)$:
+\[
+\text{softmax}(z_i) = \frac{e^{z_i}}{\sum_{j=1}^{n} e^{z_j}}
+\]
+The output is a probability distribution: all values are in $[0, 1]$ and sum to 1.
+
+\medskip
+\noindent \textbf{Key property:} softmax is sensitive to the \emph{magnitude} of its inputs.
+\begin{itemize}
+\item Small inputs $\bm{z} \approx (0.1, 0.2, 0.1)$: output $\approx (0.32, 0.36, 0.32)$ --- uniform, spread out.
+\item Large inputs $\bm{z} \approx (1, 20, 1)$: output $\approx (0.0, 1.0, 0.0)$ --- one-hot, all mass on one element.
+\end{itemize}
+\end{formaldef}
+
+\begin{intuition}[Softmax as a ``temperature dial'']
+Think of softmax as a dial between two extremes:
+
+\begin{center}
+\begin{tabular}{lcl}
+\textbf{Inputs near zero} & $\longleftrightarrow$ & \textbf{Inputs very large} \\
+Uniform distribution &  & One-hot (argmax) \\
+``Consider everything equally'' &  & ``Focus on one thing only'' \\
+Gradients are healthy &  & Gradients are near zero \\
+\end{tabular}
+\end{center}
+
+When attention scores are too large (because we didn't scale), softmax becomes
+a hard argmax. The output says ``attend 100\% to position 3, 0\% everywhere else.''
+The gradient of this is essentially zero for all inputs except the maximum, so
+\textbf{the model cannot learn to adjust its attention pattern}.
+
+\medskip
+\noindent This is called \textbf{softmax saturation}: the function is ``stuck'' at the extremes.
+\end{intuition}
+
+\begin{application}[Numerical example with our $d_k = 32$]
+Suppose $\bm{q}$ and $\bm{k}$ are 32-dimensional with elements $\sim \mathcal{N}(0, 1)$.
+
+\medskip
+\noindent \textbf{Without scaling:}
+\[
+\text{score} = \bm{q} \cdot \bm{k} \quad\Rightarrow\quad \sigma_\text{score} = \sqrt{32} \approx 5.66
+\]
+A typical score vector might be: $[2.1,\; 15.3,\; -4.7,\; 8.2]$.
+
+$\text{softmax}([2.1,\; 15.3,\; -4.7,\; 8.2]) \approx [0.000,\; 0.999,\; 0.000,\; 0.001]$
+
+Almost one-hot. Gradient $\approx 0$ for all but one position.
+
+\medskip
+\noindent \textbf{With scaling by $\sqrt{32}$:}
+\[
+\text{score} = \frac{\bm{q} \cdot \bm{k}}{\sqrt{32}} \quad\Rightarrow\quad \sigma_\text{score} = 1
+\]
+A typical score vector might be: $[0.4,\; 2.7,\; -0.8,\; 1.4]$.
+
+$\text{softmax}([0.4,\; 2.7,\; -0.8,\; 1.4]) \approx [0.06,\; 0.60,\; 0.02,\; 0.17]$
+
+Smooth distribution. All positions get meaningful gradient. The model can learn.
+\end{application}
+
+
+% =====================================================================
+\section{The Other $\sqrt{d}$: Embedding Scaling}
+% =====================================================================
+
+Now we connect to the embedding layer. This is a \emph{different} appearance of $\sqrt{d}$,
+but it comes from the same mathematical root.
+
+\begin{formaldef}[Embedding scaling in the paper]
+Section 3.4 of ``Attention Is All You Need'' (Vaswani et al., 2017):
+
+\begin{quote}
+``In the embedding layers, we multiply those weights by $\sqrt{d_\text{model}}$.''
+\end{quote}
+
+The embedding forward pass is:
+\[
+\text{output} = \underbrace{\bm{E}[\text{token\_ids}] \cdot \sqrt{d_\text{model}}}_{\text{scaled token embedding}} + \underbrace{\bm{PE}[\text{position}]}_{\text{positional encoding}}
+\]
+
+where $\bm{E}$ is the learned embedding matrix and $\bm{PE}$ is the fixed sinusoidal encoding.
+\end{formaldef}
+
+\begin{intuition}[Why embeddings need scaling: the magnitude mismatch]
+Two signals are being \textbf{added} together in the embedding layer:
+
+\begin{enumerate}
+\item \textbf{Token embedding}: what character is this? (learned)
+\item \textbf{Positional encoding}: where is it in the sequence? (fixed, sin/cos)
+\end{enumerate}
+
+For addition to be meaningful, both signals must have \textbf{comparable magnitudes}.
+If one is 50$\times$ bigger, the other is effectively invisible in the sum.
+
+\medskip
+\noindent The positional encoding uses $\sin$ and $\cos$, which produce values in $[-1, +1]$.
+Each element has a typical absolute value around $0.7$ (the RMS of a sine wave is $1/\sqrt{2}$).
+
+\noindent The token embedding is initialized small. How small depends on the scheme:
+
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Initialization} & \textbf{Per-element $\sigma$} & \textbf{Vector L2 norm} \\
+& & ($\approx \sqrt{d} \cdot \sigma$) \\
+\midrule
+Our NumPy ($\times 0.02$) & 0.02 & $\sqrt{64} \times 0.02 = 0.16$ \\
+Paper ($ \sim \mathcal{N}(0, 1/\sqrt{d})$) & 0.125 & $\sqrt{64} \times 0.125 = 1.0$ \\
+PyTorch \texttt{nn.Embedding} default & 1.0 & $\sqrt{64} \times 1.0 = 8.0$ \\
+Positional encoding & $\sim 0.7$ & $\sqrt{64} \times 0.7 = 5.6$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\medskip
+\noindent Without scaling, our NumPy embeddings have norm $0.16$ vs positional encoding norm $5.6$.
+The ratio is $35:1$ --- position completely drowns out content.
+
+\medskip
+\noindent After multiplying by $\sqrt{d_\text{model}} = \sqrt{64} = 8$:
+\[
+\text{Scaled embedding norm} = 8 \times 0.16 = 1.28
+\]
+Now the ratio is $5.6 : 1.28 \approx 4.4 : 1$. Not perfectly balanced, but the content signal
+is now \textbf{audible}. During training, the embedding weights grow and the balance improves further.
+\end{intuition}
+
+\begin{application}[In our code: \texttt{src/embedding.py:95--100}]
+\begin{verbatim}
+# Step 1: Token embedding lookup
+token_emb = self.token_embedding[token_ids]       # (batch, seq, 64)
+
+# Scale embeddings by sqrt(d_model) as in original paper
+token_emb = token_emb * np.sqrt(self.d_model)     # multiply by 8.0
+
+# Step 2: Add positional encoding
+pos_emb = self.pos_encoding[:seq_len, :]           # (seq, 64)
+output = token_emb + pos_emb                       # (batch, seq, 64)
+\end{verbatim}
+
+\noindent Before our bug fix, the \texttt{np.sqrt(self.d\_model)} line was missing.
+The PyTorch version (\texttt{src/model\_torch.py:145}) always had it:
+\begin{verbatim}
+token_emb = token_emb * math.sqrt(self.d_model)   # multiply by 8.0
+\end{verbatim}
+\end{application}
+
+\begin{dimcheck}
+\begin{tabular}{lll}
+\toprule
+\textbf{Stage} & \textbf{Shape} & \textbf{Per-element magnitude} \\
+\midrule
+Token IDs & \texttt{(batch, seq)} & integers in $[0, 95]$ \\
+Raw embedding lookup & \texttt{(batch, seq, 64)} & $\sim 0.02$ \\
+After $\times \sqrt{64}$ & \texttt{(batch, seq, 64)} & $\sim 0.16$ \\
+Positional encoding & \texttt{(seq, 64)} & $\sim 0.7$ \\
+Sum (embedding + positional) & \texttt{(batch, seq, 64)} & $\sim 0.7$--$0.9$ \\
+\bottomrule
+\end{tabular}
+\end{dimcheck}
+
+
+% =====================================================================
+\section{Unifying the Two Scalings}
+% =====================================================================
+
+\begin{formaldef}[The two $\sqrt{d}$ scalings in a transformer]
+\begin{enumerate}
+\item \textbf{Embedding layer}: multiply by $\sqrt{d_\text{model}}$ \\
+\emph{Purpose}: scale UP embeddings to match positional encoding magnitude.
+
+\item \textbf{Attention layer}: divide by $\sqrt{d_k}$ \\
+\emph{Purpose}: scale DOWN dot products to prevent softmax saturation.
+\end{enumerate}
+
+\noindent Both arise from the same mathematical fact:
+\[
+\boxed{\text{Var}\!\left(\sum_{i=1}^{d} X_i\right) = d \cdot \text{Var}(X_i)}
+\]
+When you sum $d$ random terms, the result has standard deviation $\sqrt{d}$ times
+the standard deviation of each term. The correction factor is always $\sqrt{d}$.
+\end{formaldef}
+
+\begin{intuition}[One formula, two directions]
+The $\sqrt{d}$ factor is like a ``dimension tax'' --- the price you pay for working in high dimensions.
+
+\begin{itemize}
+\item In \textbf{embeddings}, we PAY the tax voluntarily: multiply by $\sqrt{d}$ to boost
+the signal up to where positional encodings live. We \emph{want} the embedding to be bigger.
+
+\item In \textbf{attention}, we UNDO the tax: divide by $\sqrt{d}$ to bring the dot product
+back down to a safe range for softmax. We \emph{don't want} the score to be bigger.
+\end{itemize}
+
+\noindent Same $\sqrt{d}$, opposite directions, same reason.
+\end{intuition}
+
+\begin{application}[Full signal flow through our Proust model]
+Let us trace the magnitude of a single value through the entire architecture:
+
+\begin{center}
+\begin{tabular}{llc}
+\toprule
+\textbf{Stage} & \textbf{Code location} & \textbf{Per-element $\sigma$} \\
+\midrule
+Embedding init & \texttt{embedding.py:38} & 0.02 \\
+$\times \sqrt{64}$ scaling & \texttt{embedding.py:100} & $0.02 \times 8 = 0.16$ \\
+$+$ positional encoding & \texttt{embedding.py:109} & $\sim 0.7$ \\
+$\rightarrow$ into attention & \texttt{attention.py:199} & $\sim 0.7$ \\
+Q, K projection ($\times W$) & \texttt{attention.py:199} & $\sqrt{64} \times 0.7 \times 0.02 \approx 0.11$ \\
+Dot product $Q \cdot K$ & \texttt{attention.py:221} & $\sqrt{32} \times 0.11^2 \approx 0.07$ \\
+$\div \sqrt{32}$ scaling & \texttt{attention.py:224} & $0.07 / 5.66 \approx 0.01$ \\
+Softmax & \texttt{attention.py:240} & probabilities in $[0, 1]$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent At every stage, the magnitudes stay in a ``reasonable'' range. No explosions, no vanishing.
+The two $\sqrt{d}$ scalings are two of the key mechanisms that ensure this.
+\end{application}
+
+
+% =====================================================================
+\section{The Deeper Connection: L2 Norm and Dimension}
+% =====================================================================
+
+\begin{formaldef}[L2 norm of a random vector]
+For a $d$-dimensional vector $\bm{v}$ where each element $v_i$ has mean $0$ and variance $\sigma^2$:
+\[
+\|\bm{v}\|^2 = \sum_{i=1}^{d} v_i^2
+\]
+Taking the expected value:
+\[
+\mathbb{E}\!\left[\|\bm{v}\|^2\right] = \sum_{i=1}^{d} \mathbb{E}[v_i^2] = d \cdot \sigma^2
+\]
+So:
+\[
+\|\bm{v}\| \approx \sqrt{d} \cdot \sigma
+\]
+The L2 norm of a random vector scales as $\sqrt{d}$ --- same factor, same reason.
+\end{formaldef}
+
+\begin{intuition}[High dimensions are strange]
+In 2D, a vector with elements $\sim \mathcal{N}(0, 1)$ has length $\approx \sqrt{2} \approx 1.4$.
+In 64D, the same distribution gives length $\approx \sqrt{64} = 8$.
+In 768D (GPT-2), it's $\approx \sqrt{768} \approx 27.7$.
+
+\medskip
+\noindent High-dimensional vectors are \textbf{much longer} than you'd expect from their individual elements.
+This is not because any single element is large --- it's because there are \emph{many small contributions}
+that accumulate via the Pythagorean theorem.
+
+\medskip
+\noindent This is why $\sqrt{d}$ appears so often in machine learning:
+\begin{itemize}
+\item Xavier/Glorot initialization: $\sigma = 1/\sqrt{d_\text{in}}$
+\item Attention scaling: $\div \sqrt{d_k}$
+\item Embedding scaling: $\times \sqrt{d_\text{model}}$
+\item Layer normalization: normalize the $\sqrt{d}$-sized vector back to unit variance
+\end{itemize}
+They are all compensating for the same geometric reality of high dimensions.
+\end{intuition}
+
+\begin{application}[Numerical check with our model]
+Our embedding vectors: $d = 64$, $\sigma = 0.02$:
+\[
+\|\bm{e}\| \approx \sqrt{64} \times 0.02 = 0.16
+\]
+Our positional encoding vectors: $d = 64$, elements $\in [-1, 1]$ with RMS $\approx 0.7$:
+\[
+\|\bm{p}\| \approx \sqrt{64} \times 0.7 = 5.6
+\]
+Ratio without scaling: $5.6 / 0.16 = 35$.
+
+After $\times \sqrt{64}$ scaling: $5.6 / (0.16 \times 8) = 5.6 / 1.28 = 4.4$.
+
+Much better --- and training will close the remaining gap.
+\end{application}
+
+
+% =====================================================================
+\section{Summary Table}
+% =====================================================================
+
+\begin{center}
+\begin{tabular}{p{3cm}p{3.5cm}p{3cm}p{3.5cm}}
+\toprule
+\textbf{Where} & \textbf{Formula} & \textbf{Dimension} & \textbf{Why} \\
+\midrule
+Embedding layer & $\bm{e} \times \sqrt{d_\text{model}}$ & $d_\text{model} = 64$ &
+Scale up to match positional encoding magnitude \\[6pt]
+
+Attention scores & $\bm{q} \cdot \bm{k} \;/\; \sqrt{d_k}$ & $d_k = 32$ &
+Scale down to prevent softmax saturation \\[6pt]
+
+Xavier init & $\sigma = 1 / \sqrt{d_\text{in}}$ & $d_\text{in}$ = input dim &
+Keep layer output variance $\approx$ input variance \\[6pt]
+
+LayerNorm & Normalize to $\mu=0, \sigma=1$ across $d_\text{model}$ & $d_\text{model} = 64$ &
+Undo any accumulated magnitude drift \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+All four are different manifestations of the same underlying principle:
+\textbf{when you sum or combine $d$ independent numbers, the result grows by $\sqrt{d}$,
+and you must compensate.}
+
+
+% =====================================================================
+\section{Key Identities and Properties}
+% =====================================================================
+
+\begin{enumerate}
+\item $\text{Var}(aX) = a^2 \cdot \text{Var}(X)$ \quad (scaling by constant $a$)
+
+\item $\text{Var}(X + Y) = \text{Var}(X) + \text{Var}(Y)$ \quad (if $X, Y$ independent)
+
+\item $\text{Var}(X \cdot Y) = \text{Var}(X) \cdot \text{Var}(Y)$ \quad (if $X, Y$ independent, zero-mean)
+
+\item $\text{Var}\!\left(\sum_{i=1}^{d} X_i\right) = d \cdot \sigma^2$ \quad (i.i.d. variables, the core theorem)
+
+\item $\text{Var}\!\left(\frac{1}{\sqrt{d}} \sum_{i=1}^{d} X_i\right) = \sigma^2$ \quad (the fix: divide by $\sqrt{d}$)
+
+\item $\|\bm{v}\| \approx \sqrt{d} \cdot \sigma$ \quad (L2 norm of a random $d$-dimensional vector)
+\end{enumerate}
+
+\medskip
+\noindent Identities 4 and 5 are the entire story. Everything else is a special case.
+
+
+% =====================================================================
+\section{What This Document Does Not Cover (Yet)}
+% =====================================================================
+
+\begin{itemize}
+\item \textbf{Gradient flow}: how $\sqrt{d}$ affects the backward pass and gradient magnitudes
+(related, but requires chain rule derivations).
+\item \textbf{Pre-norm vs post-norm}: how the placement of LayerNorm interacts with these scaling choices.
+\item \textbf{RoPE and ALiBi}: modern positional encodings that avoid the additive approach entirely.
+\item \textbf{FlashAttention}: how fused kernels handle the scaling internally.
+\item \textbf{Non-unit-variance initializations}: what happens when the i.i.d.\ assumption breaks
+(e.g., after several layers of training when weights are no longer near initialization).
+\end{itemize}
+
+
+\vfill
+\begin{center}
+\rule{0.5\textwidth}{0.4pt}
+
+\medskip
+\emph{``The real voyage of discovery consists not in seeking new landscapes,\\
+but in having new eyes.''}
+
+--- Marcel Proust, \textit{La Prisonni\`{e}re}
+\end{center}
+
+\end{document}

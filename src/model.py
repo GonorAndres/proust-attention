@@ -43,7 +43,7 @@ different internal processing.
 """
 
 import numpy as np
-from attention import MultiHeadAttention, softmax
+from src.attention import MultiHeadAttention, softmax
 
 
 # =============================================================================
@@ -468,7 +468,7 @@ class Transformer:
         # --- Embedding layer ---
         # Converts token IDs to dense vectors with position info
         # We import it inline to avoid circular imports
-        from embedding import Embedding
+        from src.embedding import Embedding
         self.embedding = Embedding(vocab_size, d_model, max_seq_len)
 
         # --- Transformer blocks ---
@@ -623,7 +623,7 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------------
     sample_text = "Mucho tiempo he estado acostándome temprano."
 
-    from tokenizer import CharTokenizer
+    from src.tokenizer import CharTokenizer
 
     tokenizer = CharTokenizer()
     tokenizer.build_vocab(sample_text)
