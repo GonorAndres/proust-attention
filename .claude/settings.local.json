@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile:*)",
+      "Bash(tree:*)",
+      "Bash(find:*)",
+      "Bash(python notebooks/complete_example.py:*)",
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "WebSearch",
+      "WebFetch(domain:archive.org)"
+    ]
+  },
+  "outputStyle": "Explanatory"
+}
