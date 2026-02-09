@@ -41,7 +41,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.model_torch import Transformer, CONFIG
-from src.dataset import create_dataloader, ProustDataset
+from src.dataset import create_dataloader, create_dataloaders, ProustDataset
 from src.tokenizer import CharTokenizer
 
 
@@ -56,7 +56,7 @@ TRAIN_CONFIG = {
     'betas': (0.9, 0.95),       # Adam betas
 
     # Learning rate schedule
-    'warmup_steps': 100,        # Linear warmup steps
+    'warmup_steps': 500,        # Linear warmup steps
 
     # Gradient clipping
     'max_grad_norm': 1.0,       # Clip gradient norm
@@ -226,6 +226,40 @@ def train_epoch(
 
 
 # =============================================================================
+# VALIDATION
+# =============================================================================
+
+@torch.no_grad()
+def validate(model: Transformer, dataloader, device: torch.device) -> float:
+    """
+    Evaluate model on a validation DataLoader.
+
+    Returns:
+        Average cross-entropy loss over all validation batches.
+    """
+    model.eval()
+    total_loss = 0.0
+    n_batches = 0
+    loss_fn = nn.CrossEntropyLoss()
+
+    for input_ids, target_ids in dataloader:
+        input_ids = input_ids.to(device)
+        target_ids = target_ids.to(device)
+
+        result = model(input_ids)
+        logits = result['logits']
+
+        batch_size, seq_len, vocab_size = logits.shape
+        loss = loss_fn(logits.view(-1, vocab_size), target_ids.view(-1))
+
+        total_loss += loss.item()
+        n_batches += 1
+
+    model.train()
+    return total_loss / n_batches if n_batches > 0 else 0.0
+
+
+# =============================================================================
 # CHECKPOINT MANAGEMENT
 # =============================================================================
 
@@ -239,8 +273,9 @@ def save_checkpoint(
     checkpoint_dir: Path,
     tokenizer: CharTokenizer,
     model_config: dict,
+    val_loss: float = None,
 ):
-    """Save model checkpoint."""
+    """Save model checkpoint. Only overwrites best.pt when val_loss improves."""
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     checkpoint = {
@@ -250,6 +285,7 @@ def save_checkpoint(
         'optimizer_state_dict': optimizer.state_dict(),
         'scheduler_state_dict': scheduler.state_dict(),
         'loss': loss,
+        'val_loss': val_loss,
         'model_config': model_config,
         'vocab': {
             'char_to_idx': tokenizer.char_to_idx,
@@ -263,15 +299,25 @@ def save_checkpoint(
     torch.save(checkpoint, path)
     print(f"Saved checkpoint: {path}")
 
-    # Also save as 'best.pt' (overwrite)
+    # Save as best.pt only if val_loss improved
     best_path = checkpoint_dir / "best.pt"
-    torch.save(checkpoint, best_path)
+    save_best = True
+    if val_loss is not None and best_path.exists():
+        prev_best = torch.load(best_path, map_location='cpu', weights_only=False)
+        prev_val_loss = prev_best.get('val_loss')
+        if prev_val_loss is not None and val_loss >= prev_val_loss:
+            save_best = False
+
+    if save_best:
+        torch.save(checkpoint, best_path)
+        print(f"Saved new best model (val_loss={val_loss:.4f})"
+              if val_loss is not None else "Saved best.pt")
 
 
 def load_checkpoint(checkpoint_path: Path, device: torch.device):
     """Load model checkpoint."""
     print(f"Loading checkpoint: {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     return checkpoint
 
 
@@ -313,21 +359,21 @@ def train(
     print("LOADING DATA")
     print("=" * 60)
 
-    dataloader, dataset = create_dataloader(
+    train_loader, val_loader, train_dataset, val_dataset = create_dataloaders(
         corpus_path=corpus_path,
         vocab_path=vocab_path,
         batch_size=batch_size,
         context_length=context_length,
-        shuffle=True,
     )
 
-    tokenizer = dataset.tokenizer
-    vocab_size = dataset.vocab_size
+    tokenizer = train_dataset.tokenizer
+    vocab_size = train_dataset.vocab_size
 
     print(f"Vocabulary size: {vocab_size}")
     print(f"Batch size: {batch_size}")
     print(f"Context length: {context_length}")
-    print(f"Steps per epoch: {len(dataloader)}")
+    print(f"Train steps per epoch: {len(train_loader)}")
+    print(f"Val steps per epoch: {len(val_loader)}")
 
     # Model configuration
     model_config = {
@@ -360,7 +406,7 @@ def train(
         betas=TRAIN_CONFIG['betas'],
     )
 
-    total_steps = epochs * len(dataloader)
+    total_steps = epochs * len(train_loader)
     scheduler = get_lr_scheduler(
         optimizer,
         warmup_steps=TRAIN_CONFIG['warmup_steps'],
@@ -399,7 +445,7 @@ def train(
 
         avg_loss, global_step = train_epoch(
             model=model,
-            dataloader=dataloader,
+            dataloader=train_loader,
             optimizer=optimizer,
             scheduler=scheduler,
             device=device,
@@ -409,9 +455,13 @@ def train(
             config=TRAIN_CONFIG,
         )
 
+        # Validation
+        val_loss = validate(model, val_loader, device)
+
         epoch_time = time.time() - epoch_start
         print(f"\nEpoch {epoch + 1} complete | "
-              f"Avg Loss: {avg_loss:.4f} | "
+              f"Train Loss: {avg_loss:.4f} | "
+              f"Val Loss: {val_loss:.4f} | "
               f"Time: {epoch_time:.1f}s")
 
         # Save checkpoint
@@ -426,6 +476,7 @@ def train(
                 checkpoint_dir=checkpoint_dir,
                 tokenizer=tokenizer,
                 model_config=model_config,
+                val_loss=val_loss,
             )
 
     total_time = time.time() - start_time

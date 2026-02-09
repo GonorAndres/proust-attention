@@ -57,57 +57,66 @@ class ProustDataset(Dataset):
 
     def __init__(self, corpus_path: str, vocab_path: str = None,
                  context_length: int = DEFAULT_CONTEXT_LENGTH,
-                 tokenizer: CharTokenizer = None):
+                 tokenizer: CharTokenizer = None,
+                 _encoded_data: torch.Tensor = None):
         """
         Args:
             corpus_path: Path to processed corpus text file
             vocab_path: Path to vocabulary JSON file (optional if tokenizer provided)
             context_length: Number of characters per sample
             tokenizer: Optional pre-built tokenizer (if None, loads from vocab_path)
+            _encoded_data: Optional pre-encoded tensor (skips file loading/encoding)
         """
         self.context_length = context_length
 
-        # Load corpus
-        corpus_path = Path(corpus_path)
-        if not corpus_path.exists():
-            raise FileNotFoundError(
-                f"Corpus not found: {corpus_path}\n"
-                f"Run: python data/download_corpus.py"
-            )
-
-        with open(corpus_path, 'r', encoding='utf-8') as f:
-            self.text = f.read()
-
-        print(f"Loaded corpus: {len(self.text):,} characters")
-
-        # Load or build tokenizer
-        if tokenizer is not None:
+        if _encoded_data is not None:
+            # Use pre-encoded data directly (for train/val splitting)
+            self.text = ""
             self.tokenizer = tokenizer
+            self.encoded = _encoded_data
+            print(f"Using pre-encoded data: {self.encoded.shape[0]:,} tokens")
         else:
-            self.tokenizer = CharTokenizer()
+            # Load corpus from file
+            corpus_path = Path(corpus_path)
+            if not corpus_path.exists():
+                raise FileNotFoundError(
+                    f"Corpus not found: {corpus_path}\n"
+                    f"Run: python data/download_corpus.py"
+                )
 
-            if vocab_path and Path(vocab_path).exists():
-                # Load vocabulary from JSON
-                with open(vocab_path, 'r', encoding='utf-8') as f:
-                    vocab_data = json.load(f)
+            with open(corpus_path, 'r', encoding='utf-8') as f:
+                self.text = f.read()
 
-                self.tokenizer.char_to_idx = vocab_data['char_to_idx']
-                self.tokenizer.idx_to_char = {
-                    int(k): v for k, v in vocab_data['idx_to_char'].items()
-                }
-                self.tokenizer.vocab_size = vocab_data['vocab_size']
-                print(f"Loaded vocabulary: {self.tokenizer.vocab_size} characters")
+            print(f"Loaded corpus: {len(self.text):,} characters")
+
+            # Load or build tokenizer
+            if tokenizer is not None:
+                self.tokenizer = tokenizer
             else:
-                # Build vocabulary from corpus
-                print("Building vocabulary from corpus...")
-                self.tokenizer.build_vocab(self.text)
-                print(f"Built vocabulary: {self.tokenizer.vocab_size} characters")
+                self.tokenizer = CharTokenizer()
 
-        # Encode entire corpus once (memory efficient for char-level)
-        print("Encoding corpus...")
-        self.encoded = self.tokenizer.encode(self.text)
-        self.encoded = torch.from_numpy(self.encoded).long()
-        print(f"Encoded shape: {self.encoded.shape}")
+                if vocab_path and Path(vocab_path).exists():
+                    # Load vocabulary from JSON
+                    with open(vocab_path, 'r', encoding='utf-8') as f:
+                        vocab_data = json.load(f)
+
+                    self.tokenizer.char_to_idx = vocab_data['char_to_idx']
+                    self.tokenizer.idx_to_char = {
+                        int(k): v for k, v in vocab_data['idx_to_char'].items()
+                    }
+                    self.tokenizer.vocab_size = vocab_data['vocab_size']
+                    print(f"Loaded vocabulary: {self.tokenizer.vocab_size} characters")
+                else:
+                    # Build vocabulary from corpus
+                    print("Building vocabulary from corpus...")
+                    self.tokenizer.build_vocab(self.text)
+                    print(f"Built vocabulary: {self.tokenizer.vocab_size} characters")
+
+            # Encode entire corpus once (memory efficient for char-level)
+            print("Encoding corpus...")
+            self.encoded = self.tokenizer.encode(self.text)
+            self.encoded = torch.from_numpy(self.encoded).long()
+            print(f"Encoded shape: {self.encoded.shape}")
 
         # Calculate number of samples
         # We need context_length + 1 characters for each sample
@@ -207,6 +216,85 @@ def create_dataloader(
     )
 
     return dataloader, dataset
+
+
+def create_dataloaders(
+    corpus_path: str,
+    vocab_path: str = None,
+    batch_size: int = 32,
+    context_length: int = DEFAULT_CONTEXT_LENGTH,
+    num_workers: int = 0,
+    tokenizer: CharTokenizer = None,
+    val_fraction: float = 0.1,
+) -> Tuple[DataLoader, DataLoader, ProustDataset, ProustDataset]:
+    """
+    Create train and validation DataLoaders with a contiguous split.
+
+    The corpus is encoded once, then the last `val_fraction` of the encoded
+    tensor becomes the validation set. Using a contiguous block (rather than
+    random sampling) prevents context leakage between train and val.
+
+    Args:
+        corpus_path: Path to processed corpus
+        vocab_path: Path to vocabulary JSON
+        batch_size: Samples per batch
+        context_length: Characters per sample
+        num_workers: DataLoader workers (0 = main process)
+        tokenizer: Optional pre-built tokenizer
+        val_fraction: Fraction of data for validation (default 0.1)
+
+    Returns:
+        Tuple of (train_loader, val_loader, train_dataset, val_dataset)
+    """
+    # Build a full dataset to encode the corpus and load the tokenizer
+    full_dataset = ProustDataset(
+        corpus_path=corpus_path,
+        vocab_path=vocab_path,
+        context_length=context_length,
+        tokenizer=tokenizer,
+    )
+
+    # Split the encoded tensor: last val_fraction becomes validation
+    total_tokens = len(full_dataset.encoded)
+    val_size = int(total_tokens * val_fraction)
+    train_size = total_tokens - val_size
+
+    train_encoded = full_dataset.encoded[:train_size]
+    val_encoded = full_dataset.encoded[train_size:]
+
+    print(f"Split: {train_size:,} train tokens, {val_size:,} val tokens "
+          f"({val_fraction:.0%} val)")
+
+    # Create separate datasets using the pre-encoded slices
+    train_dataset = ProustDataset(
+        corpus_path=corpus_path,
+        context_length=context_length,
+        tokenizer=full_dataset.tokenizer,
+        _encoded_data=train_encoded,
+    )
+    val_dataset = ProustDataset(
+        corpus_path=corpus_path,
+        context_length=context_length,
+        tokenizer=full_dataset.tokenizer,
+        _encoded_data=val_encoded,
+    )
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=torch.cuda.is_available(),
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=torch.cuda.is_available(),
+    )
+
+    return train_loader, val_loader, train_dataset, val_dataset
 
 
 # =============================================================================

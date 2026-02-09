@@ -52,10 +52,10 @@ from src.attention import MultiHeadAttention, softmax
 # All hyperparameters in one place. No magic numbers anywhere below.
 
 CONFIG = {
-    'd_model': 64,          # Embedding dimension
+    'd_model': 128,         # Embedding dimension
     'n_heads': 2,           # Number of attention heads
     'n_layers': 2,          # Number of transformer blocks
-    'd_ff': 256,            # FeedForward hidden dimension (4 * d_model)
+    'd_ff': 512,            # FeedForward hidden dimension (4 * d_model)
     'max_seq_len': 256,     # Maximum sequence length
     'init_scale': 0.02,     # Weight initialization scale
     'mask_value': -1e9,     # Value for masked positions

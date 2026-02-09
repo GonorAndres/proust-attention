@@ -146,6 +146,18 @@ def clean_generic_headers(text: str) -> str:
         r"^\s*\d+\s*$",  # Page numbers
         r"^_+$",  # Underline separators
         r"^-+$",  # Dash separators
+        # Librodot OCR watermarks (~360 occurrences in Swann)
+        r"^librodot\b",
+        r"^https?://",
+        # Publisher metadata (Muchachas en flor edition)
+        r"^santiago rueda",
+        r"^buenos aires",
+        r"^copyright\b",
+        r"^impreso en la argentina",
+        r"^queda hecho el dep[oó]sito",
+        r"^artes gr[aá]ficas",
+        # Short OCR garbage fragments (Proust has no legit <=5 char lines)
+        r"^.{1,5}$",
     ]
 
     for line in lines:
@@ -355,9 +367,27 @@ def process_raw_files() -> str:
         size_kb = f.stat().st_size / 1024
         print(f"  - {f.name} ({size_kb:.1f} KB)")
 
+    # Sort files by Proust volume order using filename keywords
+    def _volume_sort_key(path: Path) -> int:
+        """Map filename keywords to volume numbers for correct ordering."""
+        name_lower = path.name.lower()
+        keyword_to_volume = {
+            'swann': 1,
+            'sombra': 2, 'muchachas': 2,
+            'guermantes': 3,
+            'sodoma': 4, 'gomorra': 4,
+            'prisionera': 5,
+            'fugitiva': 6, 'albertine': 6,
+            'recobrado': 7,
+        }
+        for keyword, volume in keyword_to_volume.items():
+            if keyword in name_lower:
+                return volume
+        return 99  # Unknown files sort last
+
     # Read and concatenate all files
     all_text = []
-    for txt_file in sorted(txt_files):
+    for txt_file in sorted(txt_files, key=_volume_sort_key):
         print(f"\nProcessing: {txt_file.name}")
 
         # Try different encodings

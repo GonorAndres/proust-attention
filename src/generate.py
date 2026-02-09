@@ -210,7 +210,7 @@ def load_model(checkpoint_path: str, device: torch.device = None) -> tuple:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     print(f"Loading checkpoint: {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     # Extract configuration
     model_config = checkpoint['model_config']

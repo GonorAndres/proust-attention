@@ -45,10 +45,10 @@ import torch.nn.functional as F
 # =============================================================================
 
 CONFIG = {
-    'd_model': 64,          # Embedding dimension
+    'd_model': 128,         # Embedding dimension
     'n_heads': 2,           # Number of attention heads
     'n_layers': 2,          # Number of transformer blocks
-    'd_ff': 256,            # FeedForward hidden dimension (4 * d_model)
+    'd_ff': 512,            # FeedForward hidden dimension (4 * d_model)
     'max_seq_len': 256,     # Maximum sequence length (context window)
     'dropout': 0.1,         # Dropout probability
 }
@@ -656,7 +656,7 @@ def verify_against_numpy():
 
     # --- NumPy model ---
     try:
-        from model import Transformer as NumpyTransformer, CONFIG as NP_CONFIG
+        from src.model import Transformer as NumpyTransformer, CONFIG as NP_CONFIG
 
         print("\n--- NumPy Model ---")
 
