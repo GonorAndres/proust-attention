@@ -241,13 +241,71 @@ def filter_characters(text: str) -> str:
     return ''.join(char for char in text if char in allowed_chars)
 
 
+def extract_mobi(mobi_path: Path) -> str:
+    """
+    Extract plain text from .mobi using calibre's ebook-convert.
+
+    Calibre handles the MOBI -> TXT conversion natively, producing clean
+    UTF-8 text with paragraph structure preserved.
+
+    Args:
+        mobi_path: Path to the .mobi file
+
+    Returns:
+        Extracted plain text content
+    """
+    import subprocess
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix='.txt', delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        subprocess.run(
+            ['ebook-convert', str(mobi_path), tmp_path],
+            capture_output=True, check=True
+        )
+        with open(tmp_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def strip_ebook_metadata(text: str) -> str:
+    """
+    Remove Titivillus ePub front/back matter.
+
+    All 7 Proust volumes from this ebook edition share reliable markers:
+    - Front matter ends at the "ePub base r2.1" line (synopsis, credits, etc.)
+    - Back matter starts at "MARCEL PROUST (1871" (author bio, index, notes)
+
+    Args:
+        text: Raw extracted ebook text
+
+    Returns:
+        Text with front/back matter removed
+    """
+    # Front: strip everything through "ePub base r2.1" line
+    marker = 'ePub base r2.1'
+    idx = text.find(marker)
+    if idx != -1:
+        text = text[idx + len(marker):]
+
+    # Back: strip from "MARCEL PROUST (1871" onward
+    marker = 'MARCEL PROUST (1871'
+    idx = text.find(marker)
+    if idx != -1:
+        text = text[:idx]
+
+    return text.strip()
+
+
 def clean_text(text: str, source_type: str = "generic") -> str:
     """
     Full text cleaning pipeline.
 
     Args:
         text: Raw text content
-        source_type: "gutenberg", "archive", "cervantes", or "generic"
+        source_type: "gutenberg", "archive", "cervantes", "mobi", or "generic"
 
     Returns:
         Cleaned text
@@ -255,12 +313,15 @@ def clean_text(text: str, source_type: str = "generic") -> str:
     # Step 1: Normalize Unicode
     text = normalize_unicode(text)
 
-    # Step 2: Remove source-specific headers
+    # Step 2: Remove source-specific headers/metadata
     if source_type == "gutenberg":
         text = clean_gutenberg_text(text)
+    elif source_type == "mobi":
+        text = strip_ebook_metadata(text)
 
-    # Step 3: Remove generic headers
-    text = clean_generic_headers(text)
+    # Step 3: Remove generic headers (skip for mobi -- no OCR artifacts)
+    if source_type != "mobi":
+        text = clean_generic_headers(text)
 
     # Step 4: Filter to allowed characters only
     text = filter_characters(text)
@@ -347,25 +408,15 @@ def print_vocab_stats(vocab: dict, text: str) -> None:
 
 def process_raw_files() -> str:
     """
-    Process any .txt files found in data/raw/ directory.
+    Process raw files found in data/raw/ directory.
 
-    This is the fallback when automated download fails.
-    Users can manually download Proust texts and place them here.
+    Prefers .mobi files (born-digital, clean text) over .txt files
+    (OCR, noisy). If .mobi files are found, .txt files are ignored entirely.
 
     Returns:
         Concatenated and cleaned text, or empty string if no files found.
     """
     RAW_DIR.mkdir(parents=True, exist_ok=True)
-
-    txt_files = list(RAW_DIR.glob("*.txt"))
-
-    if not txt_files:
-        return ""
-
-    print(f"\nFound {len(txt_files)} text file(s) in {RAW_DIR}:")
-    for f in txt_files:
-        size_kb = f.stat().st_size / 1024
-        print(f"  - {f.name} ({size_kb:.1f} KB)")
 
     # Sort files by Proust volume order using filename keywords
     def _volume_sort_key(path: Path) -> int:
@@ -385,29 +436,59 @@ def process_raw_files() -> str:
                 return volume
         return 99  # Unknown files sort last
 
-    # Read and concatenate all files
+    # Prefer .mobi (clean ebook) over .txt (noisy OCR)
+    mobi_files = list(RAW_DIR.glob("*.mobi"))
+    txt_files = list(RAW_DIR.glob("*.txt"))
+
+    if mobi_files:
+        source_files = mobi_files
+        source_type = "mobi"
+        if txt_files:
+            print(f"\nFound {len(mobi_files)} .mobi and {len(txt_files)} .txt files.")
+            print("Using .mobi files (cleaner born-digital text).")
+    elif txt_files:
+        source_files = txt_files
+        source_type = "generic"
+    else:
+        return ""
+
+    print(f"\nFound {len(source_files)} {source_type} file(s) in {RAW_DIR}:")
+    for f in sorted(source_files, key=_volume_sort_key):
+        size_kb = f.stat().st_size / 1024
+        print(f"  - {f.name} ({size_kb:.1f} KB)")
+
+    # Read and concatenate all files in volume order
     all_text = []
-    for txt_file in sorted(txt_files, key=_volume_sort_key):
-        print(f"\nProcessing: {txt_file.name}")
+    for source_file in sorted(source_files, key=_volume_sort_key):
+        print(f"\nProcessing: {source_file.name}")
 
-        # Try different encodings
-        for encoding in ['utf-8', 'latin-1', 'cp1252']:
-            try:
-                with open(txt_file, 'r', encoding=encoding) as f:
-                    text = f.read()
-                print(f"  Encoding: {encoding}")
-                print(f"  Raw length: {len(text):,} characters")
+        if source_type == "mobi":
+            # Extract text from mobi using calibre
+            print("  Extracting with ebook-convert...")
+            raw_text = extract_mobi(source_file)
+            print(f"  Raw length: {len(raw_text):,} characters")
 
-                # Clean the text
-                text = clean_text(text)
-                print(f"  Cleaned length: {len(text):,} characters")
-
-                all_text.append(text)
-                break
-            except UnicodeDecodeError:
-                continue
+            text = clean_text(raw_text, source_type="mobi")
+            print(f"  Cleaned length: {len(text):,} characters")
+            all_text.append(text)
         else:
-            print(f"  Warning: Could not decode {txt_file.name}")
+            # Read .txt with encoding detection
+            for encoding in ['utf-8', 'latin-1', 'cp1252']:
+                try:
+                    with open(source_file, 'r', encoding=encoding) as f:
+                        text = f.read()
+                    print(f"  Encoding: {encoding}")
+                    print(f"  Raw length: {len(text):,} characters")
+
+                    text = clean_text(text)
+                    print(f"  Cleaned length: {len(text):,} characters")
+
+                    all_text.append(text)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            else:
+                print(f"  Warning: Could not decode {source_file.name}")
 
     return "\n\n".join(all_text)
 
@@ -530,6 +611,12 @@ MINIMUM CORPUS SIZE:
 
 def main():
     """Main entry point for corpus download/processing."""
+    import argparse
+    parser = argparse.ArgumentParser(description="Proust corpus acquisition")
+    parser.add_argument('--force', action='store_true',
+                        help="Reprocess raw files without prompting")
+    args = parser.parse_args()
+
     print("=" * 60)
     print("PROUST ATTENTION MACHINE - CORPUS ACQUISITION")
     print("=" * 60)
@@ -541,7 +628,7 @@ def main():
     corpus_text = ""
 
     # Step 1: Check for existing processed corpus
-    if CORPUS_FILE.exists():
+    if CORPUS_FILE.exists() and not args.force:
         print(f"\nExisting corpus found: {CORPUS_FILE}")
         size_mb = CORPUS_FILE.stat().st_size / (1024 * 1024)
         print(f"Size: {size_mb:.2f} MB")
@@ -553,6 +640,8 @@ def main():
                 corpus_text = f.read()
         else:
             corpus_text = ""
+    elif args.force:
+        print("\n--force: reprocessing raw files.")
 
     # Step 2: Process raw files if needed
     if not corpus_text:
