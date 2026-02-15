@@ -147,6 +147,15 @@ python src/train.py --epochs 50 --batch_size 32
 streamlit run demo/streamlit_app.py
 ```
 
+## Session Log
+
+### 2026-02-07
+- Created bilingual blog post (ES + EN) for the portfolio site covering the Proust Attention Machine project
+- Rewrote post in editorial/personal essay style with attention heatmap visualizations
+
+### 2026-02-15
+- Fixed blog language switcher so the Proust post works correctly when toggling ES/EN (slug prefix stripping in portfolio repo)
+
 ## Notes for Claude Code
 
 When helping with this project:

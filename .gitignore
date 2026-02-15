@@ -61,7 +61,8 @@ Thumbs.db
 # Subagent outputs
 subagents_outputs/
 
-# Claude ephemeral (config files ARE tracked)
+# Claude ephemeral (config files ARE tracked, local settings are not)
+.claude/settings.local.json
 .claude/cache/
 .claude/debug/
 .claude/downloads/
