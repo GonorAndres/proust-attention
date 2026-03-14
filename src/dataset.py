@@ -182,7 +182,7 @@ def create_dataloader(
     batch_size: int = 32,
     context_length: int = DEFAULT_CONTEXT_LENGTH,
     shuffle: bool = True,
-    num_workers: int = 0,
+    num_workers: int = 4,
     tokenizer: CharTokenizer = None,
 ) -> Tuple[DataLoader, ProustDataset]:
     """
@@ -213,6 +213,7 @@ def create_dataloader(
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
+        persistent_workers=(num_workers > 0),
     )
 
     return dataloader, dataset
@@ -223,7 +224,7 @@ def create_dataloaders(
     vocab_path: str = None,
     batch_size: int = 32,
     context_length: int = DEFAULT_CONTEXT_LENGTH,
-    num_workers: int = 0,
+    num_workers: int = 4,
     tokenizer: CharTokenizer = None,
     val_fraction: float = 0.1,
 ) -> Tuple[DataLoader, DataLoader, ProustDataset, ProustDataset]:
@@ -285,6 +286,7 @@ def create_dataloaders(
         shuffle=True,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
+        persistent_workers=(num_workers > 0),
     )
     val_loader = DataLoader(
         val_dataset,
@@ -292,6 +294,7 @@ def create_dataloaders(
         shuffle=False,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
+        persistent_workers=(num_workers > 0),
     )
 
     return train_loader, val_loader, train_dataset, val_dataset
