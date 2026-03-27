@@ -332,6 +332,7 @@ def train(
     epochs: int = 50,
     batch_size: int = 32,
     context_length: int = 256,
+    stride: int = 128,
     resume_from: str = None,
     device: str = None,
 ):
@@ -364,6 +365,7 @@ def train(
         vocab_path=vocab_path,
         batch_size=batch_size,
         context_length=context_length,
+        stride=stride,
     )
 
     tokenizer = train_dataset.tokenizer
@@ -372,6 +374,7 @@ def train(
     print(f"Vocabulary size: {vocab_size}")
     print(f"Batch size: {batch_size}")
     print(f"Context length: {context_length}")
+    print(f"Stride: {stride} (window overlap: {(context_length - stride) / context_length:.0%})")
     print(f"Train steps per epoch: {len(train_loader)}")
     print(f"Val steps per epoch: {len(val_loader)}")
 
@@ -528,6 +531,10 @@ def main():
         '--context-length', type=int, default=256,
         help='Context window length'
     )
+    parser.add_argument(
+        '--stride', type=int, default=128,
+        help='Stride for sliding window (default: 128, i.e. 50%% overlap with ctx=256)'
+    )
 
     # Resume training
     parser.add_argument(
@@ -557,6 +564,7 @@ def main():
         epochs=args.epochs,
         batch_size=args.batch_size,
         context_length=args.context_length,
+        stride=args.stride,
         resume_from=args.resume,
         device=args.device,
     )
