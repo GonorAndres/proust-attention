@@ -51,12 +51,15 @@ class ProustDataset(Dataset):
         - input_ids:  (context_length,) tensor of token IDs
         - target_ids: (context_length,) tensor of token IDs, shifted by 1
 
-    The dataset uses overlapping windows with stride=1, giving us
-    approximately (corpus_length - context_length) samples.
+    The dataset uses overlapping windows with a configurable stride.
+    stride=1 gives maximum overlap (~N samples), stride=context_length
+    gives zero overlap. stride=context_length//2 (50% overlap) is a
+    good default that balances coverage and training speed.
     """
 
     def __init__(self, corpus_path: str, vocab_path: str = None,
                  context_length: int = DEFAULT_CONTEXT_LENGTH,
+                 stride: int = 1,
                  tokenizer: CharTokenizer = None,
                  _encoded_data: torch.Tensor = None):
         """
@@ -68,6 +71,7 @@ class ProustDataset(Dataset):
             _encoded_data: Optional pre-encoded tensor (skips file loading/encoding)
         """
         self.context_length = context_length
+        self.stride = stride
 
         if _encoded_data is not None:
             # Use pre-encoded data directly (for train/val splitting)
@@ -121,7 +125,11 @@ class ProustDataset(Dataset):
         # Calculate number of samples
         # We need context_length + 1 characters for each sample
         # (context_length for input, context_length for target with 1 char shift)
-        self.n_samples = len(self.encoded) - context_length
+        # With stride > 1, we skip positions to reduce redundancy:
+        #   stride=1   → ~N samples (maximum overlap, very slow)
+        #   stride=128 → ~N/128 samples (50% overlap with ctx=256, good default)
+        #   stride=256 → ~N/256 samples (no overlap, every char seen once)
+        self.n_samples = (len(self.encoded) - context_length) // self.stride
 
         if self.n_samples <= 0:
             raise ValueError(
@@ -152,11 +160,14 @@ class ProustDataset(Dataset):
 
             The model learns: given A, predict B; given AB, predict C; etc.
         """
+        # Map sample index to position in the encoded corpus
+        start = idx * self.stride  # (stride controls window spacing)
+
         # Get input sequence
-        input_ids = self.encoded[idx : idx + self.context_length]
+        input_ids = self.encoded[start : start + self.context_length]
 
         # Get target sequence (shifted by 1)
-        target_ids = self.encoded[idx + 1 : idx + 1 + self.context_length]
+        target_ids = self.encoded[start + 1 : start + 1 + self.context_length]
 
         return input_ids, target_ids
 
@@ -181,6 +192,7 @@ def create_dataloader(
     vocab_path: str = None,
     batch_size: int = 32,
     context_length: int = DEFAULT_CONTEXT_LENGTH,
+    stride: int = 1,
     shuffle: bool = True,
     num_workers: int = 4,
     tokenizer: CharTokenizer = None,
@@ -193,6 +205,7 @@ def create_dataloader(
         vocab_path: Path to vocabulary JSON
         batch_size: Samples per batch
         context_length: Characters per sample
+        stride: Step size between windows (1=max overlap, context_length=no overlap)
         shuffle: Whether to shuffle samples
         num_workers: DataLoader workers (0 = main process)
         tokenizer: Optional pre-built tokenizer
@@ -204,6 +217,7 @@ def create_dataloader(
         corpus_path=corpus_path,
         vocab_path=vocab_path,
         context_length=context_length,
+        stride=stride,
         tokenizer=tokenizer,
     )
 
@@ -224,6 +238,7 @@ def create_dataloaders(
     vocab_path: str = None,
     batch_size: int = 32,
     context_length: int = DEFAULT_CONTEXT_LENGTH,
+    stride: int = 1,
     num_workers: int = 4,
     tokenizer: CharTokenizer = None,
     val_fraction: float = 0.1,
@@ -240,6 +255,7 @@ def create_dataloaders(
         vocab_path: Path to vocabulary JSON
         batch_size: Samples per batch
         context_length: Characters per sample
+        stride: Step size between windows (1=max overlap, context_length=no overlap)
         num_workers: DataLoader workers (0 = main process)
         tokenizer: Optional pre-built tokenizer
         val_fraction: Fraction of data for validation (default 0.1)
@@ -270,12 +286,14 @@ def create_dataloaders(
     train_dataset = ProustDataset(
         corpus_path=corpus_path,
         context_length=context_length,
+        stride=stride,
         tokenizer=full_dataset.tokenizer,
         _encoded_data=train_encoded,
     )
     val_dataset = ProustDataset(
         corpus_path=corpus_path,
         context_length=context_length,
+        stride=stride,
         tokenizer=full_dataset.tokenizer,
         _encoded_data=val_encoded,
     )
