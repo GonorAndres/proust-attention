@@ -10,12 +10,13 @@ Educational project building a transformer-based text generator from scratch, tr
 
 ## Architecture Decisions
 
-- **Model size**: ~300k parameters (trainable on Colab free tier)
+- **Model size**: ~420k parameters (trained on Colab free tier T4 GPU)
 - **Blocks**: 2 transformer layers
 - **Heads**: 2 attention heads
-- **Embedding dim**: 64
+- **Embedding dim**: 128 (d_ff: 512)
 - **Context window**: 256 characters (Proust's long sentences need room)
-- **Tokenization**: Character-level (simple, no BPE complexity)
+- **Tokenization**: Character-level (94-char vocab, Spanish + punctuation)
+- **Training stride**: 128 (50% window overlap, 128x faster than stride=1)
 
 ## Project Structure
 
@@ -24,27 +25,35 @@ proust-attention/
 ├── CLAUDE.md
 ├── README.md
 ├── data/
-│   ├── raw/                    # Original downloaded texts
-│   ├── processed/              # Cleaned, concatenated corpus
-│   └── download_corpus.py      # Gutenberg/Archive scraper
+│   ├── raw/                    # Original .mobi ebooks (7 volumes)
+│   ├── processed/              # Cleaned corpus + vocab.json
+│   └── download_corpus.py      # Mobi extraction + cleaning pipeline
 ├── notebooks/
 │   ├── 01_numpy_attention.ipynb      # Phase 1: Understanding
 │   ├── 02_pytorch_training.ipynb     # Phase 2: Training
-│   └── 03_visualization.ipynb        # Phase 3: Demo
+│   ├── 03_visualization.ipynb        # Phase 3: Demo
+│   └── colab_training.ipynb          # Colab GPU training notebook
 ├── src/
 │   ├── __init__.py
 │   ├── attention.py            # Core attention (NumPy + PyTorch versions)
-│   ├── model.py                # Full transformer architecture
+│   ├── model.py                # Full transformer architecture (NumPy)
+│   ├── model_torch.py          # Full transformer architecture (PyTorch)
+│   ├── dataset.py              # PyTorch Dataset + DataLoader (with stride)
 │   ├── tokenizer.py            # Character-level tokenizer
-│   ├── train.py                # Training loop
+│   ├── train.py                # Training loop (AdamW, cosine LR, val tracking)
 │   └── generate.py             # Text generation + sampling
-├── viz/
-│   ├── attention_heatmap.py
-│   └── embedding_viz.py
-├── checkpoints/                # Saved model weights
-├── requirements.txt
-└── demo/
-    └── streamlit_app.py        # Interactive demo
+├── space/
+│   ├── app.py                  # Gradio demo for HF Spaces
+│   ├── requirements.txt
+│   └── README.md               # HF Space metadata
+├── scripts/
+│   ├── train_gcp.sh            # One-shot GCP GPU training
+│   ├── push_to_hf.py           # Upload model to HF Hub
+│   └── hf_model_card.md        # HF model card template
+├── docs/
+│   └── roadmap.md              # Detailed improvement roadmap
+├── checkpoints/                # Saved model weights (best.pt)
+└── requirements.txt
 ```
 
 ## Development Phases
@@ -64,14 +73,23 @@ proust-attention/
 - [x] Port NumPy code to PyTorch (keep structure identical)
 - [x] Implement training loop with AdamW
 - [x] Add gradient clipping, learning rate scheduling
-- [ ] Train on full corpus (Colab GPU)
-- [ ] Checkpoint saving/loading
+- [x] Train on full corpus (Colab T4 GPU) — best val_loss=1.1739 at epoch 20
+- [x] Checkpoint saving/loading (best.pt by val_loss)
+- [x] Configurable stride for training efficiency (128x speedup)
 
 ### Phase 3: Visualization + Demo
 - [ ] Attention heatmaps per head
-- [ ] Embedding space visualization (t-SNE)
+- [ ] Embedding space visualization (t-SNE/UMAP)
 - [ ] Interactive generation with attention overlay
-- [ ] Streamlit deployment
+- [x] Hugging Face deployment (model repo + Gradio Space)
+
+### Phase 4: Model Improvements (see docs/roadmap.md for details)
+- [ ] Verify NumPy vs PyTorch equivalence
+- [ ] BPE tokenization (character -> subword)
+- [ ] Scaling experiments (depth vs width)
+- [ ] Dropout/regularization tuning
+- [ ] KV-cache for fast inference
+- [ ] Rotary Positional Embeddings (RoPE)
 
 ## Code Conventions
 
@@ -135,16 +153,23 @@ Output:         (batch, heads, seq, d_k) → (batch, seq, d_model)
 
 ```bash
 # Setup
-pip install numpy torch matplotlib seaborn streamlit
+pip install numpy torch matplotlib seaborn streamlit tqdm huggingface_hub
 
-# Download data
-python data/download_corpus.py
+# Download/regenerate corpus
+python data/download_corpus.py --force
 
-# Training (after Phase 2)
-python src/train.py --epochs 50 --batch_size 32
+# Training (stride=128 default, ~30 min on T4)
+python src/train.py --epochs 50 --batch-size 64 --stride 128
+python src/train.py --resume checkpoints/best.pt --epochs 20  # resume
 
-# Demo
-streamlit run demo/streamlit_app.py
+# Generate text
+python src/generate.py --checkpoint checkpoints/best.pt --prompt "Mucho tiempo"
+
+# Push model to Hugging Face
+python scripts/push_to_hf.py --repo-id GonorAndres/proust-attention
+
+# GCP one-shot training
+bash scripts/train_gcp.sh
 ```
 
 ## Session Log
@@ -155,6 +180,14 @@ streamlit run demo/streamlit_app.py
 
 ### 2026-02-15
 - Fixed blog language switcher so the Proust post works correctly when toggling ES/EN (slug prefix stripping in portfolio repo)
+
+### 2026-03-27
+- Added configurable stride to dataset (128x training speedup, stride=1 was the Colab bottleneck)
+- Trained model on Colab T4: val_loss=1.1739 at epoch 20 (~420k params)
+- Uploaded trained model to HF Hub: GonorAndres/proust-attention
+- Built Gradio Space demo (Spanish UI): huggingface.co/spaces/GonorAndres/proust-attention
+- Added GCP training script, HF push script, model card
+- Created Phase 4 roadmap (docs/roadmap.md)
 
 ## Notes for Claude Code
 
