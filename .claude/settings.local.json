@@ -8,7 +8,17 @@
       "Bash(grep:*)",
       "Bash(ls:*)",
       "WebSearch",
-      "WebFetch(domain:archive.org)"
+      "WebFetch(domain:archive.org)",
+      "Bash(git -C /home/andtega349/proust-attention log --oneline --all)",
+      "Bash(wc:*)",
+      "Bash(/home/andtega349/proust-attention/.venv/bin/python:*)",
+      "Bash(apt list:*)",
+      "Bash(pip3 list:*)",
+      "Bash(sudo apt-get:*)",
+      "Bash(sudo apt-get install:*)",
+      "Bash(ebook-convert:*)",
+      "Bash(xargs:*)",
+      "Bash(.venv/bin/python:*)"
     ]
   },
   "outputStyle": "Explanatory"
