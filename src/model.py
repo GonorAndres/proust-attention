@@ -445,7 +445,7 @@ class Transformer:
     Architecture:
         Embedding -> [TransformerBlock x n_layers] -> Linear -> Softmax
 
-    Config (from CLAUDE.md):
+    Config (from AGENTS.md):
         ~300k parameters, trainable on Colab free tier
         d_model=64, n_heads=2, n_layers=2, context=256 chars
     """

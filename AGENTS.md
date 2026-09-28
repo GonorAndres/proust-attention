@@ -1,4 +1,4 @@
-# CLAUDE.md — Proust Attention Machine
+# AGENTS.md — Proust Attention Machine
 
 ## Project Overview
 
@@ -21,7 +21,7 @@ Educational project building a transformer-based text generator from scratch, tr
 
 ```
 proust-attention/
-├── CLAUDE.md
+├── AGENTS.md
 ├── README.md
 ├── data/
 │   ├── raw/                    # Original downloaded texts

@@ -276,7 +276,7 @@ if __name__ == "__main__":
     print("MULTI-HEAD ATTENTION DEMO")
     print("=" * 60)
 
-    # Config matching CLAUDE.md
+    # Config matching AGENTS.md
     batch_size = 1
     seq_len = 4
     d_model = 64

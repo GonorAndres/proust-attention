@@ -120,7 +120,7 @@ if __name__ == "__main__":
     print("EMBEDDING LAYER DEMO")
     print("=" * 60)
 
-    # Config matching CLAUDE.md
+    # Config matching AGENTS.md
     vocab_size = 100
     d_model = 64
     max_seq_len = 256

@@ -36,7 +36,7 @@ from src.tokenizer import CharTokenizer
 # CONFIGURATION
 # =============================================================================
 
-DEFAULT_CONTEXT_LENGTH = 256  # Characters of context (from CLAUDE.md)
+DEFAULT_CONTEXT_LENGTH = 256  # Characters of context (from AGENTS.md)
 
 
 # =============================================================================
